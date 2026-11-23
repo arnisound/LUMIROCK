@@ -115,6 +115,7 @@ export class App {
       }
     };
     this.zoneEditor.onSelect = () => this.renderSide();
+    this.zoneEditor.onAi = (p, detail) => this.aiClick(p, detail);
     this.timeline = new Timeline({
       seek: (t) => this.seek(t),
       select: (id) => {
@@ -582,6 +583,7 @@ export class App {
   private sideLayers(s: HTMLElement) {
     const z = this.zoneEditor;
     const tools: { t: Tool; ic: Parameters<typeof icon>[0]; l: string; k: string }[] = [
+      { t: 'ia', ic: 'wand', l: 'Détourage IA : cliquez sur un élément (Alt+clic = un détail plus petit)', k: 'W' },
       { t: 'select', ic: 'cursor', l: 'Sélection / déplacer', k: 'V' },
       { t: 'rect', ic: 'rect', l: 'Rectangle', k: 'R' },
       { t: 'arch', ic: 'arch', l: 'Arc en plein cintre', k: 'A' },
@@ -1150,6 +1152,7 @@ export class App {
 
   private setFacade(img: ImageData) {
     this.facade = img;
+    this.facadeVersion++;
     this.facadeBlob = null;
     this.project.width = img.width;
     this.project.height = img.height;
@@ -1170,6 +1173,31 @@ export class App {
       this.goto('calques');
       if (this.project.zones.length === 0) toast('Astuce : cliquez sur « Détecter fenêtres et portes » pour démarrer vite.', 'info', 6000);
     }, 30);
+  }
+
+  private facadeVersion = 0;
+  private aiBusy = false;
+
+  async aiClick(p: Pt, detail = false) {
+    if (!this.facade || this.aiBusy) return;
+    this.aiBusy = true;
+    try {
+      const { segmentAt } = await import('./analysis/aisegment');
+      this.busy('Détourage IA…');
+      const pts = await segmentAt(this.facade, `f${this.facadeVersion}`, p, (msg, r) => this.busy(r !== undefined && r < 1 ? `${msg} ${Math.round(r * 100)} %` : msg), detail);
+      if (!pts || pts.length < 3) {
+        toast('Rien de net trouvé à cet endroit : essayez un peu plus au centre de l’élément.', 'err');
+        return;
+      }
+      this.zoneEditor.addZone(pts);
+      toast('Élément détouré par l’IA. Choisissez son type à gauche si besoin.', 'ok', 2500);
+    } catch (e) {
+      console.error(e);
+      toast('Le détourage IA a échoué (connexion ou navigateur).', 'err', 6000);
+    } finally {
+      this.busy(null);
+      this.aiBusy = false;
+    }
   }
 
   autoDetect() {
@@ -1478,10 +1506,35 @@ export class App {
     this.rebuildTimer = window.setTimeout(() => this.rebuildNow(), 250);
   }
 
+  private worker: Worker | null = null;
+  private workerReq = 0;
+
   rebuildNow() {
     if (!this.facade) return;
-    this.scene = buildScene(this.facade, this.project.zones, { aiDepth: this.useAi ? this.aiDepth : null });
-    this.renderer.setScene(this.scene);
+    const aiDepth = this.useAi ? this.aiDepth : null;
+    if (!this.worker) {
+      try {
+        this.worker = new Worker(new URL('./analysis/scene.worker.ts', import.meta.url), { type: 'module' });
+        this.worker.onmessage = (e: MessageEvent<{ id: number; scene?: SceneMaps; error?: string }>) => {
+          if (e.data.id !== this.workerReq) return;
+          if (e.data.scene) this.applyScene(e.data.scene);
+          else console.error(e.data.error);
+        };
+      } catch {
+        this.worker = null;
+      }
+    }
+    if (this.worker) {
+      const id = ++this.workerReq;
+      this.worker.postMessage({ id, image: this.facade, zones: JSON.parse(JSON.stringify(this.project.zones)), aiDepth });
+    } else {
+      this.applyScene(buildScene(this.facade, this.project.zones, { aiDepth }));
+    }
+  }
+
+  private applyScene(scene: SceneMaps) {
+    this.scene = scene;
+    this.renderer.setScene(scene);
     this.dirty = true;
   }
 
@@ -1831,7 +1884,7 @@ export class App {
         else if (e.key === 'f') this.fullscreen();
       } else if (this.step === 'calques') {
         const z = this.zoneEditor;
-        const map: Record<string, Tool> = { v: 'select', r: 'rect', p: 'poly', e: 'ellipse', a: 'arch', g: 'gothic' };
+        const map: Record<string, Tool> = { v: 'select', r: 'rect', p: 'poly', e: 'ellipse', a: 'arch', g: 'gothic', w: 'ia' };
         if (map[e.key.toLowerCase()]) {
           z.setTool(map[e.key.toLowerCase()]);
           this.renderSide();

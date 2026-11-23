@@ -121,7 +121,7 @@ export class QuadEditor {
 }
 
 // ───────────────────────── Calques ─────────────────────────
-export type Tool = 'select' | 'rect' | 'poly' | 'ellipse' | 'arch' | 'gothic';
+export type Tool = 'select' | 'rect' | 'poly' | 'ellipse' | 'arch' | 'gothic' | 'ia';
 
 function inside(p: Pt, poly: Pt[]) {
   let c = false;
@@ -177,6 +177,7 @@ export class ZoneEditor {
   dim = 0.0;
   onChange: ((final: boolean) => void) | null = null;
   onSelect: ((id: string | null) => void) | null = null;
+  onAi: ((p: Pt, detail: boolean) => void) | null = null;
   private dragStart: Pt | null = null;
   private dragCur: Pt | null = null;
   private dragVertex = -1;
@@ -215,6 +216,10 @@ export class ZoneEditor {
   }
 
   private down(p: Pt, e: PointerEvent) {
+    if (this.tool === 'ia') {
+      this.onAi?.(p, e.altKey);
+      return;
+    }
     if (this.tool === 'poly') {
       if (this.poly.length >= 3) {
         const [ax, ay] = this.px(this.poly[0]), [bx, by] = this.px(p);
@@ -325,7 +330,7 @@ export class ZoneEditor {
     this.stage.redraw();
   }
 
-  private addZone(points: Pt[]) {
+  addZone(points: Pt[]) {
     const t = zoneType(this.newType);
     const n = this.zones.filter((z) => z.type === this.newType).length + 1;
     const z: Zone = { id: uid(), name: `${t.label.split(' /')[0].split(' (')[0]} ${n}`, type: this.newType, points };
