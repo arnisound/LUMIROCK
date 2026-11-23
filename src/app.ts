@@ -1,7 +1,7 @@
 // Lumirock — application principale.
 import { buildScene, MAX_WORK } from './analysis/maps';
 import { fitToWork, rectify } from './analysis/rectify';
-import { detectOpenings } from './analysis/detect';
+import { detectOpenings, findSimilar } from './analysis/detect';
 import { AudioAnalysis, analyseAudio, audioFrameAt, decodeAudio } from './audio';
 import { CATEGORIES, CATEGORY_COLORS, COMMON_PARAMS, CustomFx, EFFECTS, EFFECT_MAP, ParamDef, TRANSITIONS, customEffectDef, registerCustom, unregisterCustom } from './effects/library';
 import { openFxEditor } from './ui/fxeditor';
@@ -1060,8 +1060,10 @@ export class App {
       typeSel,
       h('div', { class: 'card' },
         h('div', { class: 'card-title' }, 'Assistants'),
-        slider({ label: 'Sensibilité de la détection', min: 0, max: 1, step: 0.05, value: this.detectSens, onInput: (v) => (this.detectSens = v) }),
-        h('button', { class: 'btn ghost wide', onclick: () => this.autoDetect() }, icon('magic'), 'Détecter fenêtres et portes'),
+        slider({ label: 'Sensibilité (plus = davantage de résultats)', min: 0, max: 1, step: 0.05, value: this.detectSens, onInput: (v) => (this.detectSens = v) }),
+        h('button', { class: 'btn primary wide', disabled: !sel || sel.type === 'silhouette', title: 'Sélectionnez un calque bien détouré (une fenêtre par exemple) : Lumirock cherche les éléments qui lui ressemblent', onclick: () => this.findSimilarZones() }, icon('wand'), sel && sel.type !== 'silhouette' ? `Trouver les éléments identiques à « ${sel.name} »` : 'Trouver les identiques (sélectionnez un exemple)'),
+        h('p', { class: 'muted small' }, 'Le plus fiable : détourez UNE fenêtre (baguette IA ou rectangle), sélectionnez-la, puis cliquez ci-dessus.'),
+        h('button', { class: 'btn ghost wide', onclick: () => this.autoDetect() }, icon('magic'), 'Détection automatique (approximative)'),
         aiBtn,
         this.aiDepth ? h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: this.useAi, onchange: (e: Event) => {
           this.useAi = (e.target as HTMLInputElement).checked;
@@ -2003,7 +2005,7 @@ export class App {
       this.setFacade(img);
       this.busy(null);
       this.goto('calques');
-      if (this.project.zones.length === 0) toast('Astuce : cliquez sur « Détecter fenêtres et portes » pour démarrer vite.', 'info', 6000);
+      if (this.project.zones.length === 0) toast('Astuce : détourez une fenêtre (baguette IA ou rectangle), sélectionnez-la, puis « Trouver les éléments identiques ».', 'info', 7000);
     }, 30);
   }
 
@@ -2032,9 +2034,31 @@ export class App {
     }
   }
 
+  findSimilarZones() {
+    const ref = this.project.zones.find((z) => z.id === this.zoneEditor.selected);
+    if (!this.facade || !ref) return;
+    this.busy('Recherche des éléments identiques…');
+    setTimeout(() => {
+      try {
+        const found = findSimilar(this.facade!, ref, this.project.zones, this.detectSens);
+        if (!found.length) {
+          toast('Aucun élément identique trouvé. Augmentez la sensibilité, ou vérifiez que l’exemple est bien détouré.', 'err', 6000);
+          return;
+        }
+        this.project.zones.push(...found);
+        this.zoneEditor.zones = this.project.zones;
+        this.zoneEditor.onChange?.(true);
+        toast(`${found.length} élément(s) identique(s) ajouté(s). Supprimez les erreurs éventuelles (Suppr) ou baissez la sensibilité.`, 'ok', 6000);
+      } finally {
+        this.busy(null);
+      }
+    }, 30);
+  }
+
   autoDetect() {
     if (!this.facade) return;
-    const found = detectOpenings(this.facade, this.detectSens);
+    const sil = this.project.zones.find((z) => z.type === 'silhouette')?.points ?? null;
+    const found = detectOpenings(this.facade, this.detectSens, sil);
     if (!found.length) {
       toast('Aucune ouverture détectée. Augmentez la sensibilité ou dessinez les calques à la main.', 'err');
       return;
