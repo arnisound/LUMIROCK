@@ -46,12 +46,24 @@ export async function exportVideo(o: VideoExportOptions): Promise<{ blob: Blob; 
   const H = Math.round(o.height / 2) * 2;
   const codec = await videoCodecFor(W, H);
   if (!codec) throw new Error('Votre navigateur ne sait pas encoder de vidéo à cette taille. Essayez une résolution plus petite ou Chrome/Edge.');
-  const canvas = document.createElement('canvas');
-  const renderer = new Renderer(canvas);
+  const renderCanvas = document.createElement('canvas');
+  const renderer = new Renderer(renderCanvas);
   renderer.setScene(o.scene);
-  renderer.resize(W, H);
+  // qualité finale : ombres plus fines + suréchantillonnage (rendu 1,5× puis réduction lissée)
+  const ss = o.finalQuality ? Math.min(1.5, 4096 / Math.max(W, H)) : 1;
+  renderer.resize(Math.round(W * ss), Math.round(H * ss));
   renderer.mediaProvider = o.mediaProvider ?? null;
   renderer.quality = o.finalQuality ? 1 : 0;
+  let canvas: HTMLCanvasElement = renderCanvas;
+  let down: CanvasRenderingContext2D | null = null;
+  if (ss > 1.01) {
+    canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    down = canvas.getContext('2d')!;
+    down.imageSmoothingEnabled = true;
+    down.imageSmoothingQuality = 'high';
+  }
   const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target: new BufferTarget() });
   const video = new CanvasSource(canvas, { codec, quality: o.quality === 'tres-haute' ? QUALITY_VERY_HIGH : QUALITY_HIGH, keyFrameInterval: 1 });
   output.addVideoTrack(video, { frameRate: o.fps });
@@ -73,6 +85,7 @@ export async function exportVideo(o: VideoExportOptions): Promise<{ blob: Blob; 
     const t = o.t0 + i / o.fps;
     if (o.prepareFrame) await o.prepareFrame(t, o.show);
     renderer.render(o.show, t, audioFrameAt(t, o.analysis, o.show.bpm), o.mode ?? 'projection', { fade: o.fade });
+    if (down) down.drawImage(renderCanvas, 0, 0, W, H);
     await video.add(i / o.fps, 1 / o.fps);
     if (i % 5 === 0) {
       o.onProgress?.(i / frames, `Image ${i + 1} / ${frames}`);

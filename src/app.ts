@@ -14,6 +14,8 @@ import { QuadEditor, Tool, ZoneEditor } from './ui/editors';
 import { $, add, clear, fmtTime, h, icon, pickFile, select, slider, toast } from './ui/dom';
 import { Stage } from './ui/stage';
 import { MAIN_TRACK, Timeline } from './ui/timeline';
+import { Preset, loadPresets, savePresets } from './presets';
+import { Previews } from './ui/previews';
 import { buildKit, canvasToPng, drawTemplate, zipFiles } from './export/kit';
 import { exportClips, exportVideo, videoCodecFor } from './export/video';
 import { SavedState, autosave, download, loadAutosave, loadLumirock, saveLumirock } from './export/projectio';
@@ -94,9 +96,10 @@ export class App {
   private exporting: AbortController | null = null;
   private hasAutosave: SavedState | null = null;
   private els!: { header: HTMLElement; side: HTMLElement; tl: HTMLElement; main: HTMLElement; viewSeg: HTMLElement; busy: HTMLElement };
-  private exportOpts = { long: 1920, fps: 30, quality: 'haute' as 'haute' | 'tres-haute', content: 'full' as 'full' | 'clips' | 'selected', audio: true, mode: 'projection' as ViewMode };
+  private exportOpts = { final: true, long: 1920, fps: 30, quality: 'haute' as 'haute' | 'tres-haute', content: 'full' as 'full' | 'clips' | 'selected', audio: true, mode: 'projection' as ViewMode };
   private detectSens = 0.5;
   history = new History();
+  previews = new Previews();
   mediaBlobs = new Map<string, Blob>();
   private mediaRuntime = new Map<string, { image?: ImageBitmap; video?: HTMLVideoElement; used?: number }>();
   private frameNo = 0;
@@ -480,6 +483,7 @@ export class App {
 
   // ───────────────────────── Panneau latéral ─────────────────────────
   renderSide() {
+    this.previews.stop();
     const s = clear(this.els.side);
     if (this.live.on) this.sideLive(s);
     else if (this.step === 'source') this.sideSource(s);
@@ -801,16 +805,53 @@ export class App {
 
   private tabLibrary(b: HTMLElement) {
     const layer = this.project.show.layers?.find((l) => l.id === this.timeline.activeTrack);
-    add(b, h('p', { class: 'muted' }, 'Cliquez sur un tableau pour l’ajouter après le tableau sélectionné', layer ? h('b', {}, ` (piste « ${layer.name} »)`) : '', '.'));
+    add(b, h('p', { class: 'muted' }, 'Cliquez sur un tableau pour l’ajouter après le tableau sélectionné', layer ? h('b', {}, ` (piste « ${layer.name} »)`) : '', '. Survolez une vignette pour la voir bouger.'));
+    const presets = loadPresets();
+    add(b, h('div', { class: 'card' },
+      h('div', { class: 'card-title' }, icon('star'), ' Mes préréglages'),
+      presets.length
+        ? h('div', { class: 'media-list' }, ...presets.map((pr) => h('div', { class: 'media-item' },
+            h('span', { class: 'dot', style: `background:${CATEGORY_COLORS[EFFECT_MAP.get(pr.effect)?.category ?? 'Lumière']}` }),
+            h('span', { class: 'zn', title: EFFECT_MAP.get(pr.effect)?.name }, pr.name),
+            h('button', { class: 'btn small', title: 'Ajouter au spectacle', onclick: () => this.addClip(pr.effect, pr.params, pr.keys) }, icon('plus')),
+            h('button', { class: 'btn small danger', title: 'Supprimer le préréglage', onclick: () => {
+              savePresets(loadPresets().filter((x) => x.id !== pr.id));
+              this.renderSide();
+            } }, '×'))))
+        : h('p', { class: 'muted small' }, 'Réglez un tableau à votre goût puis, dans « Réglages », cliquez sur « Enregistrer comme préréglage ». Vos préréglages restent dans ce navigateur, d’un projet à l’autre.'),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn ghost', disabled: !presets.length, onclick: () => download(new Blob([JSON.stringify(loadPresets(), null, 2)], { type: 'application/json' }), 'lumirock_prereglages.json') }, icon('download'), 'Exporter'),
+        h('button', { class: 'btn ghost', onclick: async () => {
+          const f = await pickFile('.json,application/json');
+          if (!f) return;
+          try {
+            const add = JSON.parse(await f.text()) as Preset[];
+            const cur = loadPresets();
+            for (const x of add) if (EFFECT_MAP.has(x.effect) && !cur.some((c) => c.id === x.id)) cur.push(x);
+            savePresets(cur);
+            this.renderSide();
+            toast(`${add.length} préréglage(s) importé(s).`, 'ok');
+          } catch {
+            toast('Fichier de préréglages illisible.', 'err');
+          }
+        } }, icon('upload'), 'Importer'),
+      ),
+    ));
     add(b, this.mediaLibrary());
     for (const cat of CATEGORIES) {
       add(b, h('h3', { class: 'cat', style: `--c:${CATEGORY_COLORS[cat]}` }, cat));
       add(b, h('div', { class: 'fx-grid' },
-        ...EFFECTS.filter((e) => e.category === cat).map((e) =>
-          h('button', { class: 'fx', style: `--c:${CATEGORY_COLORS[cat]}`, title: e.description, onclick: () => this.addClip(e.id) },
-            h('b', {}, e.name), h('span', {}, e.description), h('i', { class: `mood ${e.mood}` }, e.mood))),
+        ...EFFECTS.filter((e) => e.category === cat).map((e) => {
+          const cv = h('canvas', { class: 'fx-prev', width: 160, height: 100 });
+          this.previews.register(e.id, cv);
+          return h('button', {
+            class: 'fx', style: `--c:${CATEGORY_COLORS[cat]}`, title: e.description, onclick: () => this.addClip(e.id),
+            onmouseenter: () => this.previews.hover(e.id), onmouseleave: () => this.previews.hover(null),
+          }, cv, h('b', {}, e.name), h('span', {}, e.description), h('i', { class: `mood ${e.mood}` }, e.mood));
+        }),
       ));
     }
+    this.previews.start(this.scene);
   }
 
   private tabClip(b: HTMLElement) {
@@ -916,6 +957,12 @@ export class App {
         h('div', { class: 'row' },
           h('button', { class: 'btn icon', title: 'Déplacer avant', disabled: idx === 0, onclick: () => this.moveClip(clip.id, -1) }, icon('left')),
           h('button', { class: 'btn icon', title: 'Déplacer après', disabled: idx === list.length - 1, onclick: () => this.moveClip(clip.id, 1) }, icon('right')),
+          h('button', { class: 'btn icon', title: 'Enregistrer comme préréglage', onclick: () => {
+            const name = prompt('Nom du préréglage :', `${e.name} perso`);
+            if (!name) return;
+            savePresets([...loadPresets(), { id: uid('pr'), name, effect: clip.effect, params: structuredClone(clip.params), keys: clip.keys ? structuredClone(clip.keys) : undefined }]);
+            toast(`Préréglage « ${name} » enregistré (onglet Tableaux).`, 'ok');
+          } }, icon('star')),
           h('button', { class: 'btn icon', title: 'Dupliquer', onclick: () => this.duplicateClip(clip.id) }, icon('copy')),
           h('button', { class: 'btn icon danger', title: 'Supprimer (Suppr)', onclick: () => this.deleteClip(clip.id) }, icon('trash')),
         ),
@@ -1063,6 +1110,7 @@ export class App {
           { value: 'projection', label: 'Projection (à envoyer au vidéoprojecteur)' },
           { value: 'simulation', label: 'Simulation nuit (pour présenter au client)' },
         ], onChange: (v) => (o.mode = v as ViewMode) }),
+        h('label', { class: 'check', title: 'Ombres deux fois plus fines et rendu suréchantillonné : plus beau, environ 2× plus long' }, h('input', { type: 'checkbox', checked: o.final, onchange: (e: Event) => (o.final = (e.target as HTMLInputElement).checked) }), 'Qualité finale (plus fin, plus long)'),
         this.audio ? h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: o.audio, onchange: (e: Event) => (o.audio = (e.target as HTMLInputElement).checked) }), 'Inclure la musique') : null,
         codecInfo,
         h('button', { class: 'btn primary wide', onclick: () => this.runVideoExport(progress) }, icon('download'), 'Exporter la vidéo'),
@@ -1661,11 +1709,11 @@ export class App {
       lbl.textContent = `${Math.round(r * 100)} % — ${m}`;
     };
     const t0 = performance.now();
-    const base = (this.project.name || 'lumirock').replace(/[^\w\d-]+/g, '_');
+    const base = (this.project.name || 'lumirock').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\d-]+/g, '_');
     try {
       this.exportingFrames = true;
       const common = {
-        scene: this.scene, analysis: this.audio?.analysis ?? null, width: W, height: H, fps: o.fps, quality: o.quality, mode: o.mode, onProgress, signal: ctrl.signal,
+        scene: this.scene, analysis: this.audio?.analysis ?? null, width: W, height: H, fps: o.fps, quality: o.quality, mode: o.mode, onProgress, signal: ctrl.signal, finalQuality: o.final,
         mediaProvider: (id: string, clip: Clip, local: number) => this.mediaSource(id, clip, local),
         prepareFrame: (t: number, show: typeof this.project.show) => this.syncVideosAt(t, show),
       };
@@ -1711,7 +1759,7 @@ export class App {
         bar.style.width = `${r * 100}%`;
         lbl.textContent = m;
       });
-      download(blob, `${(this.project.name || 'lumirock').replace(/[^\w\d-]+/g, '_')}_kit_pro.zip`);
+      download(blob, `${(this.project.name || 'lumirock').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\d-]+/g, '_')}_kit_pro.zip`);
       lbl.textContent = 'Kit téléchargé ✓';
     } catch (e) {
       console.error(e);
@@ -1758,7 +1806,7 @@ export class App {
   async saveProjectFile() {
     if (!this.facade) return;
     const blob = await saveLumirock(await this.currentState());
-    download(blob, `${(this.project.name || 'projet').replace(/[^\w\d-]+/g, '_')}.lumirock`);
+    download(blob, `${(this.project.name || 'projet').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\d-]+/g, '_')}.lumirock`);
     toast('Projet enregistré.', 'ok');
   }
 
