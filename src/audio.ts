@@ -9,6 +9,97 @@ export interface AudioAnalysis {
   bpm: number;
   offset: number; // instant du premier temps (s)
   sections: number[]; // instants des changements de partie détectés (s)
+  spectrum: Float32Array; // BANDS valeurs par image d'analyse (SPEC_RATE images / s), 0..1
+  bands3: Float32Array; // basses, médiums, aigus par image (SPEC_RATE / s), 0..1
+}
+
+export const BANDS = 16;
+const SPEC_RATE = 30;
+const FFT = 2048;
+
+/** FFT radix-2 en place (réel + imaginaire). */
+function fft(re: Float32Array, im: Float32Array) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      [re[i], re[j]] = [re[j], re[i]];
+      [im[i], im[j]] = [im[j], im[i]];
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (-2 * Math.PI) / len;
+    const wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const a = i + k, b = a + len / 2;
+        const tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - tr;
+        im[b] = im[a] - ti;
+        re[a] += tr;
+        im[a] += ti;
+        const ncr = cr * wr - ci * wi;
+        ci = cr * wi + ci * wr;
+        cr = ncr;
+      }
+    }
+  }
+}
+
+/** Spectre en 16 bandes logarithmiques (40 Hz – 16 kHz) + basses / médiums / aigus. */
+function computeSpectrum(mono: Float32Array, sr: number) {
+  const hop = sr / SPEC_RATE;
+  const frames = Math.max(1, Math.floor(mono.length / hop));
+  const spec = new Float32Array(frames * BANDS);
+  const b3 = new Float32Array(frames * 3);
+  const win = new Float32Array(FFT).map((_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (FFT - 1)));
+  const edges = Array.from({ length: BANDS + 1 }, (_, k) => 40 * Math.pow(16000 / 40, k / BANDS));
+  const binOf = (f: number) => Math.max(1, Math.min(FFT / 2 - 1, Math.round((f * FFT) / sr)));
+  const re = new Float32Array(FFT), im = new Float32Array(FFT);
+  for (let f = 0; f < frames; f++) {
+    const c = Math.floor(f * hop);
+    for (let i = 0; i < FFT; i++) {
+      re[i] = (mono[c - FFT / 2 + i] ?? 0) * win[i];
+      im[i] = 0;
+    }
+    fft(re, im);
+    let lo = 0, mi = 0, hi = 0;
+    for (let k = 0; k < BANDS; k++) {
+      const a = binOf(edges[k]), b = Math.max(a + 1, binOf(edges[k + 1]));
+      let e = 0;
+      for (let j = a; j < b; j++) e += re[j] * re[j] + im[j] * im[j];
+      const v = Math.log10(1 + e / (b - a));
+      spec[f * BANDS + k] = v;
+      if (edges[k + 1] <= 220) lo += v;
+      else if (edges[k] >= 2200) hi += v;
+      else mi += v;
+    }
+    b3[f * 3] = lo;
+    b3[f * 3 + 1] = mi;
+    b3[f * 3 + 2] = hi;
+  }
+  // normalisation par bande (centile 97) puis lissage « crête rapide, retombée douce »
+  const norm = (arr: Float32Array, stride: number) => {
+    for (let k = 0; k < stride; k++) {
+      const vals: number[] = [];
+      for (let f = 0; f < frames; f += 2) vals.push(arr[f * stride + k]);
+      vals.sort((x, y) => x - y);
+      const lo = vals[Math.floor(vals.length * 0.1)] ?? 0;
+      const hi = vals[Math.floor(vals.length * 0.97)] || 1;
+      let prev = 0;
+      for (let f = 0; f < frames; f++) {
+        const v = Math.min(1, Math.max(0, (arr[f * stride + k] - lo) / Math.max(1e-6, hi - lo)));
+        prev = v > prev ? v : prev * 0.82 + v * 0.18;
+        arr[f * stride + k] = prev;
+      }
+    }
+  };
+  norm(spec, BANDS);
+  norm(b3, 3);
+  return { spec, b3 };
 }
 
 const RATE = 100; // échantillons d'analyse par seconde
@@ -115,7 +206,10 @@ export function analyseAudio(buffer: AudioBuffer): AudioAnalysis {
       last = f / RATE;
     }
   }
-  return { buffer, duration: buffer.duration, peaks, energy, bpm: Math.round(bestBpm * 10) / 10, offset: bestOff / RATE, sections };
+  const mono = new Float32Array(n);
+  for (const c of ch) for (let i = 0; i < n; i++) mono[i] += c[i] / ch.length;
+  const { spec, b3 } = computeSpectrum(mono, sr);
+  return { buffer, duration: buffer.duration, peaks, energy, bpm: Math.round(bestBpm * 10) / 10, offset: bestOff / RATE, sections, spectrum: spec, bands3: b3 };
 }
 
 /** Informations rythmiques à l'instant t (avec ou sans musique). */
@@ -132,7 +226,23 @@ export function audioFrameAt(t: number, analysis: AudioAnalysis | null, bpm: num
     const f = Math.min(analysis.energy.length - 1, Math.max(0, Math.floor(t * RATE)));
     energy = analysis.energy[f] ?? 0;
   }
-  return { beat: x < 0 ? 0 : beat, beatPhase, beatIndex: Math.max(0, beatIndex), energy };
+  const spec = new Float32Array(BANDS);
+  let bass: number, mid: number, high: number;
+  if (analysis?.spectrum) {
+    const fr = Math.min(analysis.spectrum.length / BANDS - 1, Math.max(0, Math.floor(t * SPEC_RATE)));
+    spec.set(analysis.spectrum.subarray(fr * BANDS, fr * BANDS + BANDS));
+    bass = analysis.bands3[fr * 3];
+    mid = analysis.bands3[fr * 3 + 1];
+    high = analysis.bands3[fr * 3 + 2];
+  } else {
+    // sans musique : spectre synthétique calé sur le tempo
+    const b = x < 0 ? 0 : beat;
+    bass = b;
+    mid = 0.45 + 0.3 * Math.sin(t * 2.1) * Math.sin(t * 0.7);
+    high = Math.max(0, Math.exp(-((x * 2) % 1) * 7) * 0.8 + 0.15 * Math.sin(t * 9));
+    for (let k = 0; k < BANDS; k++) spec[k] = Math.max(0, Math.min(1, (k < 4 ? bass : k < 10 ? mid : high) * (0.7 + 0.3 * Math.sin(t * 3 + k * 1.7))));
+  }
+  return { beat: x < 0 ? 0 : beat, beatPhase, beatIndex: Math.max(0, beatIndex), energy, bass, mid, high, spec };
 }
 
 export function energyAt(analysis: AudioAnalysis, t0: number, t1: number) {

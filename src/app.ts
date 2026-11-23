@@ -986,7 +986,7 @@ export class App {
     };
     const controls = e.params.map(control);
     const advanced = COMMON_PARAMS.map(control);
-    const advOpen = (clip.params._target ?? 0) !== 0 || Number(clip.params._react ?? 0) > 0 || Number(clip.params._mirror ?? 0) > 0 || Number(clip.params._hue ?? 0) !== 0 || Number(clip.params._sat ?? 1) !== 1;
+    const advOpen = (clip.params._target ?? 0) !== 0 || Number(clip.params._react ?? 0) > 0 || Number(clip.params._reactBand ?? 0) > 0 || Number(clip.params._mirror ?? 0) > 0 || Number(clip.params._hue ?? 0) !== 0 || Number(clip.params._sat ?? 1) !== 1;
     add(b, 
       h('div', { class: 'clip-head', style: `--c:${CATEGORY_COLORS[e.category]}` },
         h('div', {}, h('small', {}, `Tableau ${idx + 1} · ${e.category}`), h('b', {}, e.name)),
@@ -1078,6 +1078,12 @@ export class App {
           this.timeline.render();
           this.dirty = true;
         } }),
+      ),
+      h('div', { class: 'card' },
+        h('div', { class: 'card-title' }, 'Bandes de fréquences'),
+        h('div', { class: 'meters' },
+          ...['Basses', 'Médiums', 'Aigus'].map((l) => h('div', { class: 'meter' }, h('div', { class: 'meter-bar' }, h('i', {})), h('span', {}, l)))),
+        h('p', { class: 'muted small' }, 'Dans « Réglages › Options avancées », chaque tableau peut réagir aux basses, aux médiums ou aux aigus — par exemple le portail qui pulse sur la grosse caisse et les fenêtres qui scintillent sur les cymbales. Essayez aussi le tableau « Égaliseur ».'),
       ),
       h('button', { class: 'btn primary wide', onclick: () => this.snapToMusic() }, 'Caler la durée des tableaux sur la musique'),
       h('button', { class: 'btn ghost wide', onclick: () => {
@@ -2002,6 +2008,11 @@ export class App {
       }
       this.dirty = false;
       if (this.gizmoDrag || this.mediaClip()) this.stage.redraw();
+      const meters = this.els.side.querySelectorAll('.meter-bar i') as NodeListOf<HTMLElement>;
+      if (meters.length === 3) {
+        const fr = audioFrameAt(this.time, this.audio?.analysis ?? null, this.project.show.bpm);
+        [fr.bass, fr.mid, fr.high].forEach((v, i) => (meters[i].style.height = `${Math.round((v ?? 0) * 100)}%`));
+      }
       this.frameNo++;
       for (const r of this.mediaRuntime.values()) if (r.video && !r.video.paused && (r.used ?? -1) < this.frameNo - 2) r.video.pause();
     }

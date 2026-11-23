@@ -332,3 +332,8 @@ details.card.adv[open] > summary::after { transform: rotate(90deg); }
 
 .tl-tools { display: flex; gap: 4px; padding-left: 6px; border-left: 1px solid var(--line); }
 .tl-tools .btn.icon { width: 32px; height: 32px; padding: 6px; }
+
+.meters { display: flex; gap: 14px; justify-content: space-around; margin: 4px 0 10px; }
+.meter { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.meter-bar { width: 26px; height: 80px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line2); position: relative; overflow: hidden; }
+.meter-bar i { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--grad); transition: height 0.06s; }

@@ -21,6 +21,10 @@ export interface AudioFrame {
   beatPhase: number;
   beatIndex: number;
   energy: number;
+  bass?: number;
+  mid?: number;
+  high?: number;
+  spec?: Float32Array; // 16 bandes
 }
 
 export type ViewMode = 'projection' | 'simulation' | 'jour';
@@ -428,10 +432,12 @@ export class Renderer {
     const t = Math.max(local, 0) + t0;
     p.f('uTime', time).f('uT', t).f('uP', prog).f('uDur', fullDur).f('uQuality', this.quality);
     p.f('uBeat', audio.beat).f('uBeatPhase', audio.beatPhase).f('uBeatIndex', audio.beatIndex).f('uEnergy', audio.energy);
+    p.f('uBass', audio.bass ?? audio.beat).f('uMid', audio.mid ?? 0.5).f('uHigh', audio.high ?? 0.3);
+    this.gl.uniform1fv(p.loc('uSpec'), audio.spec ?? new Float32Array(16));
     p.f('uRelief', show.master.relief).f('uSeed', seedFrom(clip.id)).f('uZoneCount', s.zoneCount);
     // valeurs par défaut des emplacements
     p.f('uIntensity', 1).f('uSpeed', 1).v3('uColA', [1, 1, 1]).v3('uColB', [1, 1, 1]).f('uParamA', 0.5).f('uParamB', 0.5).f('uParamC', 0).f('uParamD', 0).f('uParamE', 0).f('uParamF', 0).f('uParamG', 0);
-    p.f('uTarget', 0).f('uTargetBg', 0).f('uReact', 0).f('uMirror', 0).f('uHue', 0).f('uSat', 1);
+    p.f('uTarget', 0).f('uTargetBg', 0).f('uReact', 0).f('uReactBand', 0).f('uMirror', 0).f('uHue', 0).f('uSat', 1);
     for (const def of [...effect.params, ...COMMON_PARAMS]) {
       if (def.slot === 'aux') continue;
       const v = paramAt(clip, def.key, prog, def.default);

@@ -4,7 +4,7 @@
 
 export type ParamType = 'range' | 'color' | 'text' | 'select' | 'toggle' | 'media';
 export type UniformSlot = 'uIntensity' | 'uSpeed' | 'uColA' | 'uColB' | 'uParamA' | 'uParamB' | 'uParamC' | 'uParamD' | 'uParamE' | 'uParamF' | 'uParamG' | 'aux'
-  | 'uTarget' | 'uTargetBg' | 'uReact' | 'uMirror' | 'uHue' | 'uSat';
+  | 'uTarget' | 'uTargetBg' | 'uReact' | 'uReactBand' | 'uMirror' | 'uHue' | 'uSat';
 
 export interface ParamDef {
   key: string;
@@ -1163,6 +1163,44 @@ vec3 effect(vec2 uv) {
   return uColB * neb * 0.6 + vec3(1.0, 0.97, 0.9) * glow + uColA * lines * 0.8 + uColB * lum(albedo(uv)) * 0.25;
 }`,
   },
+  {
+    id: 'egaliseur', name: 'Égaliseur', category: 'Graphique', mood: 'fort', defaultDuration: 12,
+    description: 'La façade devient un égaliseur géant : barres, calques ou anneaux qui dansent sur les basses, médiums et aigus.',
+    tags: ['national', 'mariage', 'halloween'],
+    params: [I(), CA('#2bd9ff', 'Couleur basse'), CB('#ff2bd6', 'Couleur haute'), SEL('mode', 'Forme', 'uParamC', ['Barres verticales', 'Calques par bande', 'Anneaux'], 0), R('height', 'Amplitude', 'uParamA', 0.8), R('stone', 'Mélange avec la pierre', 'uParamB', 0.5)],
+    glsl: `
+vec3 effect(vec2 uv) {
+  vec3 c = vec3(0.0);
+  float stone = mix(1.0, 0.4 + 1.2 * lum(albedo(uv)), uParamB);
+  int mode = int(uParamC + 0.5);
+  if (mode == 0) {
+    float x = uv.x * 16.0;
+    int b = int(clamp(floor(x), 0.0, 15.0));
+    float fx = fract(x);
+    float v = uSpec[b] * (0.3 + uParamA);
+    float seg = step(0.12, fx) * step(fx, 0.88) * step(0.25, fract(uv.y * 24.0));
+    float lit = step(uv.y, v);
+    float peak = sstep(0.025, 0.0, abs(uv.y - v)) * step(0.12, fx) * step(fx, 0.88);
+    c = mix(uColA, uColB, uv.y) * (lit * seg * 1.3 + peak * 2.0);
+  } else if (mode == 1) {
+    int id = zoneId(uv);
+    int ty = zoneTypeAt(uv);
+    float v = uBass;
+    vec3 col = uColA;
+    if (isOpening(ty) || ty == T_HORLOGE) { v = uHigh; col = uColB; }
+    else if (ty == T_COLONNE || ty == T_TOUR || ty == T_STATUE) { v = uMid; col = mix(uColA, uColB, 0.5); }
+    if (id == 0) { v = uBass * 0.35; }
+    c = col * pow(v, 1.5) * 1.6 * (0.6 + uParamA * 0.6) + mix(uColA, uColB, uv.x) * edgeZone(uv) * uMid;
+  } else {
+    vec2 d = asp(uv) - asp(vec2(0.5, 0.45));
+    float r = length(d) * 1.4;
+    int b = int(clamp(floor(r * 16.0), 0.0, 15.0));
+    float ring = sstep(0.5, 0.15, abs(fract(r * 16.0) - 0.5));
+    c = mix(uColA, uColB, r) * uSpec[b] * ring * (0.6 + uParamA) * 1.4;
+  }
+  return c * stone;
+}`,
+  },
   // ───────────────────────────── MÉDIAS ─────────────────────────────
   {
     id: 'media', name: 'Image / vidéo', category: 'Illusions', mood: 'calme', defaultDuration: 10,
@@ -1260,6 +1298,7 @@ export const COMMON_PARAMS: ParamDef[] = [
   },
   { key: '_targetBg', label: 'Hors cible', type: 'select', slot: 'uTargetBg', default: 0, options: [{ value: 0, label: 'Noir' }, { value: 1, label: 'Lumière douce' }] },
   { key: '_react', label: 'Réaction à la musique', type: 'range', slot: 'uReact', min: 0, max: 1.5, step: 0.01, default: 0 },
+  { key: '_reactBand', label: 'Réagit à…', type: 'select', slot: 'uReactBand', default: 0, options: [{ value: 0, label: 'Temps forts + énergie' }, { value: 1, label: 'Basses (grosse caisse, basse)' }, { value: 2, label: 'Médiums (voix, guitares)' }, { value: 3, label: 'Aigus (cymbales, brillance)' }] },
   { key: '_mirror', label: 'Symétrie', type: 'select', slot: 'uMirror', default: 0, options: [{ value: 0, label: 'Aucune' }, { value: 1, label: 'Gauche → droite' }, { value: 2, label: 'Droite → gauche' }] },
   { key: '_hue', label: 'Décalage de teinte', type: 'range', slot: 'uHue', min: -0.5, max: 0.5, step: 0.01, default: 0 },
   { key: '_sat', label: 'Saturation', type: 'range', slot: 'uSat', min: 0, max: 2, step: 0.01, default: 1 },

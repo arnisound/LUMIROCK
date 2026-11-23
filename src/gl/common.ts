@@ -25,6 +25,10 @@ uniform float uBeat;
 uniform float uBeatPhase;
 uniform float uBeatIndex;
 uniform float uEnergy;
+uniform float uBass;   // basses 0..1
+uniform float uMid;    // médiums 0..1
+uniform float uHigh;   // aigus 0..1
+uniform float uSpec[16]; // spectre en 16 bandes
 uniform float uRelief;
 uniform float uSeed;
 uniform float uZoneCount;
@@ -143,6 +147,7 @@ export const EFFECT_FOOTER = /* glsl */ `
 uniform float uTarget;    // calques ciblés (0 = toute la façade)
 uniform float uTargetBg;  // hors cible : 0 noir, 1 lumière douce
 uniform float uReact;     // réaction à la musique
+uniform float uReactBand; // 0 temps + énergie, 1 basses, 2 médiums, 3 aigus
 uniform float uMirror;    // 0 aucun, 1 gauche -> droite, 2 droite -> gauche
 uniform float uHue;       // rotation de teinte (tours)
 uniform float uSat;       // saturation
@@ -166,7 +171,9 @@ void main() {
   if (uMirror > 0.5 && uMirror < 1.5 && uv.x > 0.5) uv.x = 1.0 - uv.x;
   if (uMirror > 1.5 && uv.x < 0.5) uv.x = 1.0 - uv.x;
   vec3 c = max(effect(uv), 0.0) * uIntensity;
-  c *= 1.0 + uReact * (uBeat * 0.8 + (uEnergy - 0.5) * 0.6);
+  float drive = uBeat * 0.8 + (uEnergy - 0.5) * 0.6;
+  if (uReactBand > 0.5) drive = ((uReactBand < 1.5 ? uBass : uReactBand < 2.5 ? uMid : uHigh) - 0.35) * 1.6;
+  c *= max(0.0, 1.0 + uReact * drive);
   if (abs(uHue) > 0.001) c = max(hueShift(c, uHue * TAU), 0.0);
   c = max(mix(vec3(lum(c)), c, uSat), 0.0);
   float tm = targetMask(vUv);
