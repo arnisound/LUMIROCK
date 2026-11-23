@@ -19,7 +19,24 @@ void main() { vUv = aUv; gl_Position = vec4(aPos.x * 2.0 - 1.0, 1.0 - aPos.y * 2
 const FS = `#version 300 es
 precision highp float;
 in vec2 vUv; out vec4 o; uniform sampler2D uTex;
-void main() { o = vec4(texture(uTex, vec2(vUv.x, 1.0 - vUv.y)).rgb, 1.0); }`;
+uniform vec2 uRange;   // portion horizontale de l'image confiée à ce projecteur
+uniform vec2 uBlend;   // largeur du fondu à gauche / à droite (0 = aucun)
+void main() {
+  float x = mix(uRange.x, uRange.y, vUv.x);
+  vec3 c = texture(uTex, vec2(x, 1.0 - vUv.y)).rgb;
+  float f = 1.0;
+  if (uBlend.x > 0.0) f *= smoothstep(uRange.x, uRange.x + uBlend.x, x);
+  if (uBlend.y > 0.0) f *= 1.0 - smoothstep(uRange.y - uBlend.y, uRange.y, x);
+  o = vec4(c * pow(f, 1.0 / 2.2), 1.0);
+}`;
+
+/** Découpe de l'image pour N projecteurs côte à côte avec recouvrement. */
+export function outputSlice(index: number, total: number, overlap: number) {
+  if (total <= 1) return { range: [0, 1] as [number, number], blend: [0, 0] as [number, number] };
+  const s = (1 + (total - 1) * overlap) / total;
+  const x0 = index * (s - overlap);
+  return { range: [x0, x0 + s] as [number, number], blend: [index > 0 ? overlap : 0, index < total - 1 ? overlap : 0] as [number, number] };
+}
 
 const MESH = 32;
 
@@ -38,6 +55,9 @@ export class OutputWarp {
   private meshDirty = true;
   private mireSrc: HTMLCanvasElement | OffscreenCanvas | null = null;
   private mireUploaded = false;
+  private prog: WebGLProgram;
+  slice = outputSlice(0, 1, 0);
+  label = '';
 
   constructor(
     private win: Window,
@@ -66,6 +86,7 @@ export class OutputWarp {
     gl.bindAttribLocation(prog, 1, 'aUv');
     gl.linkProgram(prog);
     gl.useProgram(prog);
+    this.prog = prog;
     this.buf = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
     gl.enableVertexAttribArray(0);
@@ -171,7 +192,7 @@ export class OutputWarp {
 
   private renderHelp() {
     const c = this.calib;
-    this.help.innerHTML = `<b style="color:#e0a23e">CALAGE DU PROJECTEUR</b><br>
+    this.help.innerHTML = `<b style="color:#e0a23e">CALAGE DU PROJECTEUR${this.label ? ' ' + this.label : ''}</b><br>
       Glissez les points pour faire coïncider l'image avec le monument.<br>
       <b>Tab</b> point suivant · <b>flèches</b> ajuster (Maj = ×10)<br>
       <b>G</b> grille : ${c.n === 2 ? '<u>4 coins</u> · 3×3 · 5×5' : c.n === 3 ? '4 coins · <u>3×3</u> · 5×5' : '4 coins · 3×3 · <u>5×5</u>'}<br>
@@ -268,6 +289,8 @@ export class OutputWarp {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 16, 0);
     gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 8);
+    gl.uniform2f(gl.getUniformLocation(this.prog, 'uRange'), this.slice.range[0], this.slice.range[1]);
+    gl.uniform2f(gl.getUniformLocation(this.prog, 'uBlend'), this.slice.blend[0], this.slice.blend[1]);
     gl.drawArrays(gl.TRIANGLES, 0, this.count);
     // poignées
     const ctx = this.ov.getContext('2d')!;

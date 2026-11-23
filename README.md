@@ -14,7 +14,7 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 | **1. Monument** | Importer une photo de façade, ou partir d'un monument modèle (église gothique, hôtel de ville, château fort) avec ses calques déjà prêts. |
 | **2. Redressement** | Placer 4 coins (avec loupe) : la façade est mise à plat, comme vue parfaitement de face. Dimensions réelles optionnelles pour des proportions exactes. |
 | **3. Calques** | Détourer fenêtres, portes, rosace, colonnes, corniches, statues… Outils rectangle, arc plein cintre, arc gothique, ellipse, polygone, miroir. Détection automatique des ouvertures. Profondeur calculée par IA (Depth Anything V2, dans le navigateur). |
-| **4. Spectacle** | Composer avec 45 tableaux, 6 scénarios (Noël, Patrimoine, Halloween, Fête nationale, Quatre saisons, Mariage) ou « Surprends-moi ». Musique avec détection du tempo, effets qui pulsent sur le rythme, calage des tableaux sur les mesures. Ligne de temps, 12 transitions, réglages fins et options avancées (calques ciblés, réaction à la musique, symétrie, teinte, saturation). |
+| **4. Spectacle** | Composer avec 46 tableaux, 6 scénarios (Noël, Patrimoine, Halloween, Fête nationale, Quatre saisons, Mariage) ou « Surprends-moi ». Musique avec détection du tempo, effets qui pulsent sur le rythme, calage des tableaux sur les mesures. Ligne de temps, 12 transitions, réglages fins et options avancées (calques ciblés, réaction à la musique, symétrie, teinte, saturation). |
 | **5. Export** | Vidéo MP4 (jusqu'à 4K, 25 à 60 i/s, avec la musique), un fichier par tableau pour le direct, kit pro (.zip), gabarits de calage, projection plein écran depuis le navigateur. |
 
 ## Fonctions avancées
@@ -26,6 +26,8 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 - **Vos images et vidéos** : sur la façade ou cadrées dans chaque calque ; position, échelle et rotation réglables ou à la souris directement sur l'image.
 - **Détourage IA en un clic** (SlimSAM) et analyse de la façade en arrière-plan.
 - **Mode live** : pads au clavier, tap tempo, noir, intensité ; **sortie projecteur** dans une 2e fenêtre.
+- **Plusieurs vidéoprojecteurs** côte à côte (2 à 4) avec fondu des bords et calage par sortie.
+- **Programmation horaire** : démarrage et arrêt automatiques chaque soir, en boucle, noir hors horaires.
 - **Calage du projecteur intégré** : 4 coins (perspective) puis grille 3×3 ou 5×5, mire de contours projetée, enregistré avec le projet — plus besoin de logiciel de mapping à côté.
 - **Réaction par bandes** : chaque tableau peut réagir aux basses, médiums ou aigus ; tableau « Égaliseur ».
 - **Montage** : sélection multiple, couper à la tête (S), copier / coller / dupliquer, déplacement groupé.
@@ -43,7 +45,7 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 - **Matières** : Vitrail, Transmutation (or, marbre, glace, cuivre), Mosaïque, Aquarelle
 - **Nature** : Montée des eaux, Embrasement, Nuit de neige, Jardin suspendu, Aurore boréale, Coulée de lave, Brume mystérieuse, Pluie de pétales
 - **Graphique** : Squelette néon, Vague de couleurs, Battements, Kaléidoscope, Glitch, Feux d'artifice, Pluie numérique, Onde de choc, Show laser, Pixellisation, Drapeau, Égaliseur
-- **Illusions** : Fenêtres sur l'ailleurs, Lever de rideau, Texte animé (6 animations, 5 polices), Théâtre d'ombres, Vieux film, Constellations, Image / vidéo importée
+- **Illusions** : Fenêtres sur l'ailleurs, Lever de rideau, Texte animé (6 animations, 5 polices), Théâtre d'ombres, Vieux film, Constellations, Objets 3D (sphères, cubes, anneaux, boule à facettes avec ombres portées), Image / vidéo importée
 - **Utilitaire** : Pause (noir)
 
 Chaque tableau calcule la **lumière à projeter** (pas une image « collée ») : la vue *Simulation nuit* montre fidèlement ce que verra le public, la vue *Projection* montre ce qui sort du vidéoprojecteur.

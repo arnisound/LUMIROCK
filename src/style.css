@@ -347,3 +347,13 @@ details.card.adv[open] > summary::after { transform: rotate(90deg); }
 
 .tl-marker { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed rgba(224, 162, 62, 0.8); z-index: 5; pointer-events: none; }
 .tl-marker span { pointer-events: auto; cursor: pointer; position: absolute; top: 0; left: -1px; font: 700 9px Inter, sans-serif; color: #1b1206; background: var(--accent); padding: 1px 4px; border-radius: 0 4px 4px 0; white-space: nowrap; }
+
+.sched-badge { border: 1px solid var(--accent); background: rgba(224, 162, 62, 0.1); color: var(--accent); border-radius: 999px; padding: 6px 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.sched-times .field { flex: 1; margin: 4px 0; }
+.sched-times input[type='time'] { background: var(--bg); border: 1px solid var(--line2); border-radius: 8px; padding: 8px 10px; width: 100%; }
+.days { display: flex; gap: 4px; margin: 8px 0; }
+.day { flex: 1; padding: 7px 0; border-radius: 8px; border: 1px solid var(--line2); background: var(--bg); color: var(--muted); cursor: pointer; font-weight: 600; }
+.day.on { border-color: var(--accent); color: var(--accent); background: rgba(224, 162, 62, 0.1); }
+
+.facade-sel { flex-shrink: 0; min-width: 120px; }
+header.top .steps { flex-shrink: 1; min-width: 0; }

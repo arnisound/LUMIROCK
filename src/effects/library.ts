@@ -1318,6 +1318,118 @@ vec3 effect(vec2 uv) {
   return c * sstep(0.0, 0.06, uP);
 }`,
   },
+  {
+    id: 'objets3d', name: 'Objets 3D', category: 'Illusions', mood: 'moyen', defaultDuration: 14,
+    description: 'Des objets en 3D flottent devant la façade et projettent leurs ombres sur la pierre : sphères, cubes, anneaux ou boule à facettes.',
+    tags: ['national', 'mariage', 'noel', 'halloween'],
+    params: [I(), S(), CA('#ffcf5c', 'Couleur 1'), CB('#3d7fff', 'Couleur 2'),
+      SEL('shape', 'Objets', 'uParamC', ['Sphères flottantes', 'Cubes en orbite', 'Anneaux', 'Boule à facettes'], 0),
+      R('count', 'Nombre', 'uParamA', 0.5), R('wall', 'Lumière sur la façade', 'uParamB', 0.6), R('size', 'Taille', 'uParamD', 0.5)],
+    glsl: `
+float sdBox(vec3 p, vec3 b) { vec3 q = abs(p) - b; return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0); }
+float sdTorus(vec3 p, vec2 t) { vec2 q = vec2(length(p.xz) - t.x, p.y); return length(q) - t.y; }
+mat3 rotXY(float a, float b) {
+  float ca = cos(a), sa = sin(a), cb = cos(b), sb = sin(b);
+  return mat3(cb, 0.0, -sb, 0.0, 1.0, 0.0, sb, 0.0, cb) * mat3(1.0, 0.0, 0.0, 0.0, ca, sa, 0.0, -sa, ca);
+}
+int NOBJ() { int sh = int(uParamC + 0.5); return sh == 3 ? 1 : 2 + int(uParamA * 5.0); }
+vec3 objPos(int i, float t) {
+  float fi = float(i);
+  int sh = int(uParamC + 0.5);
+  if (sh == 3) return vec3(uAspect * 0.5, 0.62 + 0.03 * sin(t), 0.35);
+  float n = float(NOBJ());
+  if (sh == 1) {
+    float a = t * 0.5 + fi / n * TAU;
+    return vec3(uAspect * 0.5 + cos(a) * uAspect * 0.3, 0.5 + sin(a * 2.0) * 0.12, 0.25 + 0.12 * sin(a));
+  }
+  return vec3((0.15 + 0.7 * hash11(fi * 3.7)) * uAspect + sin(t * 0.4 + fi) * 0.06, 0.25 + 0.55 * hash11(fi * 9.1) + sin(t * (0.6 + 0.2 * fi) + fi * 2.0) * 0.08, 0.18 + 0.2 * hash11(fi * 5.3));
+}
+float objSize() { return (0.05 + uParamD * 0.12) * (int(uParamC + 0.5) == 3 ? 1.8 : 1.0); }
+// distance à la scène, id de l'objet le plus proche
+vec2 mapScene(vec3 p, float t) {
+  vec2 r = vec2(1e5, -1.0);
+  int sh = int(uParamC + 0.5);
+  float s = objSize();
+  for (int i = 0; i < 7; i++) {
+    if (i >= NOBJ()) break;
+    vec3 q = p - objPos(i, t);
+    float d;
+    if (sh == 0 || sh == 3) d = length(q) - s;
+    else if (sh == 1) d = sdBox(rotXY(t * 0.7 + float(i), t * 0.9 + float(i) * 2.0) * q, vec3(s * 0.75)) - s * 0.08;
+    else d = sdTorus(rotXY(t * 0.6 + float(i), t * 0.4 + float(i)) * q, vec2(s, s * 0.28));
+    if (d < r.x) r = vec2(d, float(i));
+  }
+  return r;
+}
+vec3 nrm(vec3 p, float t) {
+  vec2 e = vec2(0.0015, 0.0);
+  return normalize(vec3(mapScene(p + e.xyy, t).x - mapScene(p - e.xyy, t).x, mapScene(p + e.yxy, t).x - mapScene(p - e.yxy, t).x, mapScene(p + e.yyx, t).x - mapScene(p - e.yyx, t).x));
+}
+vec3 effect(vec2 uv) {
+  float t = uT * uSpeed;
+  int sh = int(uParamC + 0.5);
+  vec3 cam = vec3(uAspect * 0.5, 0.5, 2.2);
+  vec3 wallP = vec3(uv.x * uAspect, uv.y, depthAt(uv) * uRelief * 0.06);
+  vec3 rd = normalize(wallP - cam);
+  vec3 L = normalize(vec3(-0.5, 0.7, 0.9));
+  // marche vers le mur à travers les objets
+  float tr = 0.0, tMax = length(wallP - cam);
+  float hit = -1.0;
+  for (int k = 0; k < 64; k++) {
+    vec3 p = cam + rd * tr;
+    vec2 d = mapScene(p, t);
+    if (d.x < 0.001) { hit = d.y; break; }
+    tr += d.x;
+    if (tr > tMax) break;
+  }
+  float appear = sstep(0.0, 0.1, uP) * (1.0 - sstep(0.92, 1.0, uP));
+  if (hit >= 0.0 && appear > 0.01) {
+    vec3 p = cam + rd * tr;
+    vec3 n = nrm(p, t);
+    vec3 col = mod(hit, 2.0) < 1.0 ? uColA : uColB;
+    float dif = max(dot(n, L), 0.0);
+    float spec = pow(max(dot(reflect(-L, n), -rd), 0.0), 40.0);
+    float rim = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
+    if (sh == 3) {
+      // facettes miroir
+      vec3 fn = normalize(floor(n * 9.0 + 0.5));
+      float f = pow(max(dot(reflect(-L, fn), -rd), 0.0), 8.0);
+      col = mix(vec3(0.55), vec3(1.0), hash21(floor((n.xy + 1.0) * 18.0))) * (0.3 + 1.2 * f) + uColA * f;
+      return col * appear * 1.3;
+    }
+    return (col * (0.18 + 0.95 * dif) + vec3(1.0) * spec * 1.2 + col * rim * 0.5) * appear;
+  }
+  // mur : éclairage + ombres douces des objets
+  float shd = 1.0, st = 0.01;
+  for (int k = 0; k < 40; k++) {
+    float d = mapScene(wallP + L * st, t).x;
+    shd = min(shd, 10.0 * d / st);
+    st += clamp(d, 0.004, 0.08);
+    if (shd < 0.01 || st > 1.5) break;
+  }
+  shd = mix(1.0, sat(shd), appear);
+  vec3 c = vec3(1.0, 0.97, 0.92) * uParamB * (0.45 + 0.55 * diffuseAt(uv, L)) * shd;
+  // reflets colorés des objets sur la pierre
+  for (int i = 0; i < 7; i++) {
+    if (i >= NOBJ()) break;
+    vec3 o = objPos(i, t);
+    float dd = length(wallP - o);
+    c += (mod(float(i), 2.0) < 1.0 ? uColA : uColB) * 0.05 / (dd * dd * 18.0 + 0.2) * appear;
+  }
+  if (sh == 3) {
+    // taches de lumière renvoyées par la boule
+    vec3 o = objPos(0, t);
+    vec3 dir = normalize(wallP - o);
+    float a = atan(dir.y, dir.x) + t * 0.35;
+    vec2 g = vec2(a * 7.0, acos(clamp(dir.z, -1.0, 1.0)) * 14.0);
+    vec2 cell = floor(g);
+    vec2 f = fract(g) - 0.5;
+    float spot = step(0.55, hash21(cell)) * exp(-dot(f, f) * 30.0);
+    c = c * 0.5 + mix(uColA, vec3(1.0), hash21(cell + 2.0)) * spot * 1.6 * appear * (0.8 + uBeat * 0.4);
+  }
+  return c;
+}`,
+  },
   // ───────────────────────────── MÉDIAS ─────────────────────────────
   {
     id: 'media', name: 'Image / vidéo', category: 'Illusions', mood: 'calme', defaultDuration: 10,

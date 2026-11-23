@@ -17,7 +17,7 @@ import { MAIN_TRACK, Timeline } from './ui/timeline';
 import { Preset, loadPresets, savePresets } from './presets';
 import { Previews } from './ui/previews';
 import { TOUR_HOME, TOUR_SHOW, markTour, runTour, tourDone } from './ui/tour';
-import { OutputWarp, defaultCalibration } from './output/warp';
+import { OutputWarp, defaultCalibration, outputSlice } from './output/warp';
 import { buildKit, canvasToPng, drawTemplate, zipFiles } from './export/kit';
 import { exportClips, exportVideo, videoCodecFor } from './export/video';
 import { SavedState, autosave, download, loadAutosave, loadLumirock, saveLumirock } from './export/projectio';
@@ -248,6 +248,7 @@ export class App {
         ),
       ),
       h('div', { class: 'spacer' }),
+      this.project.schedule?.on ? h('button', { class: 'sched-badge', title: 'Programmation active — cliquer pour la gérer', onclick: () => this.goto('export') }, '⏰') : null,
       h('div', { class: 'actions' },
         (() => {
           const u = h('button', { class: 'btn icon ghost', title: 'Annuler (Ctrl+Z)', disabled: !this.history.canUndo(), onclick: () => this.undo() }, icon('undo'));
@@ -434,36 +435,70 @@ export class App {
   }
 
   // ───────────────────────── Sortie projecteur ─────────────────────────
-  private outputWin: Window | null = null;
-  private warp: OutputWarp | null = null;
+  private outputs: ({ win: Window; warp: OutputWarp } | null)[] = [];
 
-  /** Ouvre la sortie projecteur en mode calage. */
-  calibrateOutput() {
-    if (!this.outputWin || this.outputWin.closed) this.openOutput();
-    if (!this.warp || !this.outputWin || this.outputWin.closed) return;
-    this.warp.setCalibrating(true);
-    this.outputWin.focus();
+  private outputConf() {
+    return this.project.outputs ?? { count: 1, overlap: 0.12 };
+  }
+
+  private calibFor(i: number) {
+    return (i === 0 ? this.project.calibration : this.project.calibrations?.[i - 1]) ?? defaultCalibration();
+  }
+
+  private setCalibFor(i: number, c: ReturnType<typeof defaultCalibration> | undefined) {
+    if (i === 0) this.project.calibration = c;
+    else {
+      const arr = (this.project.calibrations ??= []);
+      while (arr.length < i) arr.push(null);
+      arr[i - 1] = c ?? null;
+    }
+  }
+
+  private outputOpen() {
+    return this.outputs.some((o) => o && !o.win.closed);
+  }
+
+  /** Met à jour la découpe de toutes les sorties ouvertes (nombre / recouvrement changés). */
+  private refreshSlices() {
+    const { count, overlap } = this.outputConf();
+    this.outputs.forEach((o, i) => {
+      if (!o || o.win.closed) return;
+      o.warp.slice = outputSlice(i, count, overlap);
+      o.warp.label = count > 1 ? `${i + 1} / ${count}` : '';
+    });
+  }
+
+  /** Ouvre la sortie projecteur i en mode calage. */
+  calibrateOutput(i = 0) {
+    const o0 = this.outputs[i];
+    if (!o0 || o0.win.closed) this.openOutput(i);
+    const o = this.outputs[i];
+    if (!o || o.win.closed) return;
+    o.warp.setCalibrating(true);
+    o.win.focus();
     toast('Calage : glissez les points dans la fenêtre projecteur (aide affichée dans la fenêtre).', 'info', 6000);
   }
 
-  resetCalibration() {
-    this.project.calibration = defaultCalibration();
-    if (this.warp) this.warp.reset();
+  resetCalibration(i = 0) {
+    this.setCalibFor(i, defaultCalibration());
+    this.outputs[i]?.warp.reset();
     this.scheduleSave();
     toast('Calage réinitialisé.', 'ok');
   }
 
-  openOutput() {
-    if (this.outputWin && !this.outputWin.closed) {
-      this.outputWin.focus();
+  openOutput(i = 0) {
+    const cur = this.outputs[i];
+    if (cur && !cur.win.closed) {
+      cur.win.focus();
       return;
     }
-    const w = window.open('', 'lumirock-sortie', 'popup,width=1280,height=720');
+    const w = window.open('', `lumirock-sortie-${i + 1}`, 'popup,width=1280,height=720');
     if (!w) {
       toast('La fenêtre a été bloquée : autorisez les fenêtres pop-up pour ce site.', 'err', 6000);
       return;
     }
-    w.document.title = 'Lumirock — Sortie projecteur';
+    const { count } = this.outputConf();
+    w.document.title = count > 1 ? `Lumirock — Projecteur ${i + 1}` : 'Lumirock — Sortie projecteur';
     w.document.body.replaceChildren();
     w.document.body.style.cssText = 'margin:0;background:#000;overflow:hidden;cursor:none';
     const v = w.document.createElement('video');
@@ -474,8 +509,8 @@ export class App {
     v.srcObject = this.stage.gl.captureStream(60);
     w.document.body.appendChild(v);
     v.play().catch(() => undefined);
-    this.warp = new OutputWarp(w, v, this.project.calibration ?? defaultCalibration(), (c) => {
-      this.project.calibration = c;
+    const warp = new OutputWarp(w, v, this.calibFor(i), (c) => {
+      this.setCalibFor(i, c);
       this.scheduleSave(false);
     }, () => {
       if (!this.scene) return null;
@@ -486,19 +521,159 @@ export class App {
       cv.getContext('2d')!.drawImage(m, 0, 0);
       return cv;
     });
+    this.outputs[i] = { win: w, warp };
+    this.refreshSlices();
     const hint = w.document.createElement('div');
-    hint.textContent = 'Glissez cette fenêtre sur le vidéoprojecteur, double-cliquez pour le plein écran, touche C pour caler l’image sur le monument';
-    hint.style.cssText = 'position:fixed;left:50%;top:20px;transform:translateX(-50%);color:#e0a23e;font:14px sans-serif;background:rgba(0,0,0,.7);padding:8px 14px;border-radius:8px;transition:opacity 1s';
+    hint.textContent = `${count > 1 ? `Projecteur ${i + 1} / ${count} — ` : ''}glissez cette fenêtre sur le vidéoprojecteur, double-cliquez pour le plein écran, touche C pour caler l’image sur le monument`;
+    hint.style.cssText = 'position:fixed;left:50%;top:20px;transform:translateX(-50%);color:#e0a23e;font:14px sans-serif;background:rgba(0,0,0,.7);padding:8px 14px;border-radius:8px;transition:opacity 1s;z-index:4';
     w.document.body.appendChild(hint);
     setTimeout(() => (hint.style.opacity = '0'), 6000);
     w.document.addEventListener('dblclick', () => (w.document.fullscreenElement ? w.document.exitFullscreen() : w.document.documentElement.requestFullscreen()));
-    this.outputWin = w;
     if (this.view !== 'projection') {
       this.view = 'projection';
       this.renderViewSwitch();
     }
     this.dirty = true;
-    toast('Sortie projecteur ouverte (vue « Projection » activée).', 'ok');
+    toast(count > 1 ? `Projecteur ${i + 1} ouvert.` : 'Sortie projecteur ouverte (vue « Projection » activée).', 'ok');
+  }
+
+  // ───────────────────────── Programmation horaire ─────────────────────────
+  private scheduleTimer = 0;
+  private scheduleBlack = false;
+  private scheduleRunning = false;
+  private wakeLock: { release: () => Promise<void> } | null = null;
+
+  private schedConf() {
+    return this.project.schedule ?? { on: false, start: '21:00', end: '23:30', days: [0, 1, 2, 3, 4, 5, 6] };
+  }
+
+  private inScheduleWindow(d = new Date()) {
+    const c = this.schedConf();
+    const [sh, sm] = c.start.split(':').map(Number), [eh, em] = c.end.split(':').map(Number);
+    const now = d.getHours() * 60 + d.getMinutes(), a = sh * 60 + sm, b = eh * 60 + em;
+    // plage qui passe minuit : le jour de référence est celui du démarrage
+    if (a <= b) return c.days.includes(d.getDay()) && now >= a && now < b;
+    if (now >= a) return c.days.includes(d.getDay());
+    const prev = (d.getDay() + 6) % 7;
+    return now < b && c.days.includes(prev);
+  }
+
+  private nextStartLabel() {
+    const c = this.schedConf();
+    const d = new Date();
+    for (let k = 0; k < 8; k++) {
+      const day = new Date(d.getFullYear(), d.getMonth(), d.getDate() + k);
+      const [sh, sm] = c.start.split(':').map(Number);
+      day.setHours(sh, sm, 0, 0);
+      if (day > d && c.days.includes(day.getDay())) {
+        return k === 0 ? `aujourd’hui à ${c.start}` : k === 1 ? `demain à ${c.start}` : `${day.toLocaleDateString('fr-FR', { weekday: 'long' })} à ${c.start}`;
+      }
+    }
+    return '—';
+  }
+
+  armSchedule(on: boolean) {
+    this.project.schedule = { ...this.schedConf(), on };
+    this.scheduleSave();
+    clearInterval(this.scheduleTimer);
+    this.scheduleBlack = false;
+    if (on) {
+      // geste utilisateur : on prépare le son et on empêche la mise en veille
+      this.ac ??= new AudioContext();
+      this.ac.resume();
+      (navigator as any).wakeLock?.request('screen').then((l: any) => (this.wakeLock = l)).catch(() => undefined);
+      this.scheduleTick();
+      this.scheduleTimer = window.setInterval(() => this.scheduleTick(), 1000);
+      toast(`Programmation active : ${this.inScheduleWindow() ? 'le spectacle démarre maintenant' : 'prochain démarrage ' + this.nextStartLabel()}. Laissez cet onglet ouvert.`, 'ok', 6000);
+    } else {
+      this.wakeLock?.release().catch(() => undefined);
+      this.wakeLock = null;
+      this.scheduleRunning = false;
+      this.dirty = true;
+    }
+    this.renderHeader();
+  }
+
+  private scheduleTick() {
+    const inside = this.inScheduleWindow();
+    if (inside && !this.scheduleRunning) {
+      this.scheduleRunning = true;
+      this.scheduleBlack = false;
+      if (this.live.on) this.exitLive();
+      this.timeline.loop = true;
+      this.seek(0);
+      this.play();
+    } else if (!inside && (this.scheduleRunning || !this.scheduleBlack)) {
+      this.scheduleRunning = false;
+      this.pause();
+      this.scheduleBlack = true;
+      this.dirty = true;
+    }
+    const badge = document.querySelector('.sched-badge');
+    if (badge) {
+      badge.textContent = inside ? `⏰ → ${this.schedConf().end}` : `⏰ ${this.schedConf().start}`;
+      (badge as HTMLElement).title = inside ? `Spectacle en cours jusqu’à ${this.schedConf().end}` : `Prochain spectacle ${this.nextStartLabel()}`;
+    }
+  }
+
+  private scheduleCard() {
+    const c = this.schedConf();
+    const set = (x: Partial<typeof c>) => {
+      this.project.schedule = { ...this.schedConf(), ...x };
+      this.scheduleSave();
+    };
+    const start = h('input', { type: 'time', value: c.start });
+    const end = h('input', { type: 'time', value: c.end });
+    start.addEventListener('change', () => set({ start: start.value || '21:00' }));
+    end.addEventListener('change', () => set({ end: end.value || '23:30' }));
+    const days = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
+    const order = [1, 2, 3, 4, 5, 6, 0];
+    return h('div', { class: 'card' },
+      h('div', { class: 'card-title' }, 'Programmation (installation de plusieurs soirs)'),
+      h('p', { class: 'muted small' }, 'Le spectacle démarre tout seul à l’heure prévue, tourne en boucle, puis la projection passe au noir. Laissez l’ordinateur allumé avec cet onglet et la sortie projecteur ouverts.'),
+      h('div', { class: 'row sched-times' },
+        h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Début'), start),
+        h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Fin'), end),
+      ),
+      h('div', { class: 'days' }, ...order.map((d) => h('button', { class: `day${c.days.includes(d) ? ' on' : ''}`, onclick: (e: Event) => {
+        const cur = this.schedConf().days;
+        set({ days: cur.includes(d) ? cur.filter((x) => x !== d) : [...cur, d] });
+        (e.target as HTMLElement).classList.toggle('on');
+      } }, days[d]))),
+      c.on
+        ? h('button', { class: 'btn danger wide', onclick: () => {
+            this.armSchedule(false);
+            this.renderSide();
+          } }, 'Arrêter la programmation')
+        : h('button', { class: 'btn primary wide', onclick: () => {
+            this.armSchedule(true);
+            this.renderSide();
+          } }, '⏰ Activer la programmation'),
+    );
+  }
+
+  private projectorsCard() {
+    const conf = this.outputConf();
+    const set = (c: Partial<typeof conf>) => {
+      this.project.outputs = { ...conf, ...c };
+      this.refreshSlices();
+      this.scheduleSave();
+    };
+    return h('div', { class: 'card' },
+      h('div', { class: 'card-title' }, 'Projeter directement'),
+      h('p', { class: 'muted small' }, 'Ouvrez la sortie, glissez-la sur l’écran du vidéoprojecteur, double-cliquez pour le plein écran, puis calez l’image sur le monument : 4 coins pour la perspective, grille 3×3 ou 5×5 pour les façades irrégulières. Le calage est enregistré avec le projet.'),
+      select<number>({ label: 'Nombre de vidéoprojecteurs (côte à côte)', value: conf.count, options: [1, 2, 3, 4].map((n) => ({ value: n, label: n === 1 ? '1 projecteur' : `${n} projecteurs, avec fondu des bords` })), onChange: (v) => {
+        set({ count: v });
+        this.renderSide();
+      } }),
+      conf.count > 1 ? slider({ label: 'Recouvrement entre projecteurs', min: 0.02, max: 0.35, step: 0.01, value: conf.overlap, format: (v) => `${Math.round(v * 100)} %`, onInput: (v) => set({ overlap: v }) }) : null,
+      ...Array.from({ length: conf.count }, (_, i) => h('div', { class: 'row' },
+        h('button', { class: 'btn ghost', onclick: () => this.openOutput(i) }, icon('screen'), conf.count > 1 ? `Sortie ${i + 1}` : 'Sortie projecteur'),
+        h('button', { class: 'btn primary', onclick: () => this.calibrateOutput(i) }, 'Caler'),
+        h('button', { class: 'btn ghost', title: 'Réinitialiser le calage', onclick: () => this.resetCalibration(i) }, '↺'),
+      )),
+      conf.count > 1 ? h('p', { class: 'muted small' }, 'Chaque bouton ouvre une fenêtre (une par projecteur). Les zones de recouvrement sont fondues automatiquement pour que la jonction soit invisible.') : null,
+    );
   }
 
   goto(step: Step) {
@@ -1310,15 +1485,8 @@ export class App {
           );
         })(),
       ),
-      h('div', { class: 'card' },
-        h('div', { class: 'card-title' }, 'Projeter directement'),
-        h('p', { class: 'muted small' }, 'Ouvrez la sortie projecteur, glissez-la sur l’écran du vidéoprojecteur puis double-cliquez pour le plein écran. Calez ensuite l’image sur le monument : 4 coins pour la perspective, puis une grille 3×3 ou 5×5 pour les façades irrégulières. Le calage est enregistré avec le projet.'),
-        h('button', { class: 'btn ghost wide', onclick: () => this.openOutput() }, icon('screen'), 'Sortie projecteur'),
-        h('div', { class: 'row' },
-          h('button', { class: 'btn primary', onclick: () => this.calibrateOutput() }, 'Caler sur le monument'),
-          h('button', { class: 'btn ghost', disabled: !this.project.calibration, onclick: () => this.resetCalibration() }, 'Réinitialiser'),
-        ),
-      ),
+      this.projectorsCard(),
+      this.scheduleCard(),
     );
   }
 
@@ -2112,12 +2280,17 @@ export class App {
       this.timeline.setTime(this.time, true);
       this.dirty = true;
     }
-    const outputOpen = !!this.outputWin && !this.outputWin.closed;
+    const outputOpen = this.outputOpen();
     if (this.live.on && this.scene) {
       const { w, h: hh } = this.stage.previewSize(outputOpen ? 1920 : 1280);
       this.renderer.resize(w, hh);
       this.renderLiveFrame();
       this.frameNo++;
+    } else if (this.scheduleBlack && this.project.schedule?.on && this.scene) {
+      if (this.dirty) {
+        this.renderer.blackout();
+        this.dirty = false;
+      }
     } else if (this.dirty && this.scene && this.facade) {
       const { w, h: hh } = this.stage.previewSize(outputOpen ? 1920 : this.playing ? 1280 : 1600);
       this.renderer.resize(w, hh);
@@ -2475,6 +2648,11 @@ export class App {
       this.quad = [[0, 0], [1, 0], [1, 1], [0, 1]];
     } else {
       this.project = structuredClone(s.project);
+      if (this.project.schedule?.on) {
+        // la programmation doit être réactivée à la main (lecture du son et anti-veille)
+        this.project.schedule.on = false;
+        setTimeout(() => toast('Ce projet avait une programmation horaire : réactivez-la dans Export.', 'info', 6000), 500);
+      }
       freezeStarts(this.project.show.clips);
       for (const l of this.project.show.layers ?? []) freezeStarts(l.clips);
       this.quad = s.quad ?? [[0, 0], [1, 0], [1, 1], [0, 1]];

@@ -601,6 +601,15 @@ export class Renderer {
     this.draw(null);
   }
 
+  /** Écran noir (hors des horaires programmés). */
+  blackout() {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this.w, this.h);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+  }
+
   /** Rendu d'un aperçu « carte » (profondeur, normales…) pour l'éditeur de calques. */
   showMap(kind: 'depth' | 'normal' | 'edges' | 'albedo') {
     if (!this.targets || !this.scene) return;
