@@ -14,7 +14,7 @@ import { QuadEditor, Tool, ZoneEditor } from './ui/editors';
 import { $, add, clear, fmtTime, h, icon, pickFile, select, slider, toast } from './ui/dom';
 import { Stage } from './ui/stage';
 import { MAIN_TRACK, Timeline } from './ui/timeline';
-import { Preset, loadPresets, savePresets } from './presets';
+import { Block, Preset, loadBlocks, loadPresets, saveBlocks, savePresets } from './presets';
 import { Previews } from './ui/previews';
 import { TOUR_HOME, TOUR_SHOW, markTour, runTour, tourDone } from './ui/tour';
 import { OutputWarp, defaultCalibration, outputSlice } from './output/warp';
@@ -1090,18 +1090,39 @@ export class App {
               this.renderSide();
             } }, '×'))))
         : h('p', { class: 'muted small' }, 'Réglez un tableau à votre goût puis, dans « Réglages », cliquez sur « Enregistrer comme préréglage ». Vos préréglages restent dans ce navigateur, d’un projet à l’autre.'),
+      (() => {
+        const blocks = loadBlocks();
+        return h('div', {},
+          h('div', { class: 'card-title', style: 'margin-top:10px' }, 'Tableaux composés'),
+          blocks.length
+            ? h('div', { class: 'media-list' }, ...blocks.map((bl) => h('div', { class: 'media-item' },
+                h('span', { class: 'dot', style: 'background:var(--accent)' }),
+                h('span', { class: 'zn', title: `${bl.items.length} tableaux sur ${1 + Math.max(...bl.items.map((x) => x.track))} piste(s)` }, `${bl.name} · ${bl.items.length} tab. · ${Math.round(bl.duration)} s`),
+                h('button', { class: 'btn small', title: 'Insérer à la tête de lecture', onclick: () => this.insertBlock(bl) }, icon('plus')),
+                h('button', { class: 'btn small danger', title: 'Supprimer', onclick: () => {
+                  saveBlocks(loadBlocks().filter((x) => x.id !== bl.id));
+                  this.renderSide();
+                } }, '×'))))
+            : h('p', { class: 'muted small' }, 'Sélectionnez plusieurs tableaux (Ctrl+clic, même sur plusieurs pistes) puis cliquez sur ★ dans la barre de la ligne de temps : l’ensemble devient un bloc réutilisable.'),
+        );
+      })(),
       h('div', { class: 'row' },
-        h('button', { class: 'btn ghost', disabled: !presets.length, onclick: () => download(new Blob([JSON.stringify(loadPresets(), null, 2)], { type: 'application/json' }), 'lumirock_prereglages.json') }, icon('download'), 'Exporter'),
+        h('button', { class: 'btn ghost', disabled: !presets.length && !loadBlocks().length, onclick: () => download(new Blob([JSON.stringify({ presets: loadPresets(), blocks: loadBlocks() }, null, 2)], { type: 'application/json' }), 'lumirock_prereglages.json') }, icon('download'), 'Exporter'),
         h('button', { class: 'btn ghost', onclick: async () => {
           const f = await pickFile('.json,application/json');
           if (!f) return;
           try {
-            const add = JSON.parse(await f.text()) as Preset[];
+            const data = JSON.parse(await f.text()) as Preset[] | { presets?: Preset[]; blocks?: Block[] };
+            const add = Array.isArray(data) ? data : data.presets ?? [];
+            const addB = Array.isArray(data) ? [] : data.blocks ?? [];
             const cur = loadPresets();
             for (const x of add) if (EFFECT_MAP.has(x.effect) && !cur.some((c) => c.id === x.id)) cur.push(x);
             savePresets(cur);
+            const curB = loadBlocks();
+            for (const x of addB) if (!curB.some((c) => c.id === x.id)) curB.push(x);
+            saveBlocks(curB);
             this.renderSide();
-            toast(`${add.length} préréglage(s) importé(s).`, 'ok');
+            toast(`${add.length} préréglage(s) et ${addB.length} tableau(x) composé(s) importé(s).`, 'ok');
           } catch {
             toast('Fichier de préréglages illisible.', 'err');
           }
@@ -2062,6 +2083,50 @@ export class App {
     if (!this.playing) toast(`Repère posé à ${fmtTime(t)}. Pendant la lecture, appuyez sur M au rythme de la musique.`, 'ok', 2500);
   }
 
+  /** Ordre des pistes : 0 = principale, puis les pistes superposées. */
+  private trackIndex(tid: string) {
+    return tid === MAIN_TRACK ? 0 : 1 + (this.project.show.layers ?? []).findIndex((l) => l.id === tid);
+  }
+
+  saveBlock() {
+    const fs = this.selectedIds().map((i) => this.findClip(i)!).filter(Boolean);
+    if (fs.length < 1) {
+      toast('Sélectionnez d’abord des tableaux (Ctrl+clic), sur une ou plusieurs pistes.', 'info');
+      return;
+    }
+    const name = prompt('Nom du tableau composé :', 'Mon tableau composé');
+    if (!name) return;
+    const t0 = Math.min(...fs.map((f) => f.start));
+    const tr0 = Math.min(...fs.map((f) => this.trackIndex(f.track)));
+    const items = fs.map((f) => ({ track: this.trackIndex(f.track) - tr0, rel: f.start - t0, clip: structuredClone(f.clip) }));
+    const duration = Math.max(...fs.map((f) => f.start + f.clip.duration)) - t0;
+    saveBlocks([...loadBlocks(), { id: uid('b'), name, duration, items }]);
+    toast(`Tableau composé « ${name} » enregistré (${fs.length} tableaux) — onglet Tableaux.`, 'ok', 4000);
+    if (this.showTab === 'tableaux') this.renderSide();
+  }
+
+  /** Insère un tableau composé à la tête de lecture, à partir de la piste active. */
+  insertBlock(b: Block) {
+    const base = Math.max(0, this.trackIndex(this.timeline.activeTrack));
+    const layers = (this.project.show.layers ??= []);
+    const at = Math.round(this.time * 100) / 100;
+    this.multi.clear();
+    let first: string | null = null;
+    for (const it of b.items) {
+      const ti = base + it.track;
+      while (ti > layers.length) layers.push({ id: uid('p'), name: `Piste ${layers.length + 2}`, clips: [], opacity: 1, blend: 'add' });
+      const list = ti === 0 ? this.project.show.clips : layers[ti - 1].clips;
+      const c: Clip = { ...structuredClone(it.clip), id: uid('c'), start: Math.round((at + it.rel) * 100) / 100 };
+      list.push(c);
+      if (!first) first = c.id;
+      else this.multi.add(c.id);
+    }
+    this.selectedClip = first;
+    this.refreshShowUI();
+    this.scheduleSave();
+    toast(`« ${b.name} » inséré à ${fmtTime(at)}.`, 'ok', 2500);
+  }
+
   private renderEditTools() {
     const sel = this.selectedIds().length;
     clear(this.timeline.tools).append(
@@ -2070,6 +2135,7 @@ export class App {
       h('button', { class: 'btn icon', title: 'Copier (Ctrl+C)', disabled: !sel, onclick: () => this.copySelection() }, icon('copy')),
       h('button', { class: 'btn icon', title: 'Coller à la tête de lecture (Ctrl+V)', disabled: !this.clipboard.length, onclick: () => this.paste() }, icon('paste')),
       h('button', { class: 'btn icon', title: 'Supprimer la sélection (Suppr)', disabled: !sel, onclick: () => this.deleteSelection() }, icon('trash')),
+      h('button', { class: 'btn icon', title: 'Enregistrer la sélection comme tableau composé (réutilisable)', disabled: !sel, onclick: () => this.saveBlock() }, icon('star')),
     );
   }
 

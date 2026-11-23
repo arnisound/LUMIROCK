@@ -26,3 +26,29 @@ export function savePresets(p: Preset[]) {
     /* stockage indisponible (navigation privée) */
   }
 }
+
+/** Tableau composé : plusieurs tableaux sur plusieurs pistes, réutilisables en bloc. */
+export interface Block {
+  id: string;
+  name: string;
+  duration: number;
+  items: { track: number; rel: number; clip: Clip }[]; // track : 0 = première piste du bloc
+}
+
+const BKEY = 'lumirock.blocks';
+
+export function loadBlocks(): Block[] {
+  try {
+    return JSON.parse(localStorage.getItem(BKEY) ?? '[]');
+  } catch {
+    return [];
+  }
+}
+
+export function saveBlocks(b: Block[]) {
+  try {
+    localStorage.setItem(BKEY, JSON.stringify(b));
+  } catch {
+    /* stockage indisponible */
+  }
+}
