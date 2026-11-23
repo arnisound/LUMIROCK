@@ -7,6 +7,7 @@ import { CATEGORIES, CATEGORY_COLORS, COMMON_PARAMS, EFFECTS, EFFECT_MAP, ParamD
 import { Renderer, SceneMaps, ViewMode, freezeStarts, showDuration, trackTimings } from './gl/renderer';
 import { PALETTES, PALETTE_FX, SCENARIOS, compose, defaultShow, newClip } from './scenarios';
 import { TEMPLATES } from './templates';
+import { CommonsResult, searchCommons } from './commons';
 import { Clip, Layer, MediaItem, Project, Pt, SoundClip, ZONE_TYPES, ZoneTypeKey, uid, zoneType } from './types';
 import { History } from './history';
 import { effectiveProgress, paramAt, removeKey, setKey } from './keys';
@@ -779,6 +780,7 @@ export class App {
         h('li', {}, 'Plus la photo est grande, plus les calques seront précis.'),
       ),
       this.hasAutosave ? h('button', { class: 'btn primary wide', onclick: () => this.restore(this.hasAutosave!) }, 'Reprendre le projet en cours') : null,
+      this.commonsCard(),
       h('h3', {}, 'Ou partez d’un monument modèle'),
       h('div', { class: 'templates' },
         ...TEMPLATES.map((t) => {
@@ -793,6 +795,73 @@ export class App {
         if (f) this.openProjectFile(f);
       } }, icon('folder'), 'Ouvrir un projet .lumirock'),
     );
+  }
+
+  private commonsQuery = '';
+  private commonsResults: CommonsResult[] = [];
+  private commonsNext: number | null = null;
+
+  /** Recherche de photos de monuments libres de droits (Wikimedia Commons). */
+  private commonsCard() {
+    const input = h('input', { type: 'search', placeholder: 'ex. cathédrale Reims façade, hôtel de ville Lyon…', value: this.commonsQuery });
+    const grid = h('div', { class: 'commons-grid' });
+    const status = h('p', { class: 'muted small' }, '');
+    const more = h('button', { class: 'btn ghost wide', style: 'display:none' }, 'Plus de résultats');
+    const show = () => {
+      clear(grid);
+      for (const r of this.commonsResults) {
+        grid.append(h('button', { class: 'commons-item', title: `${r.title}\n${r.author} — ${r.license}`, onclick: () => this.loadCommons(r) },
+          h('img', { src: r.thumb, alt: r.title, loading: 'lazy' }),
+          h('span', {}, r.license)));
+      }
+      more.style.display = this.commonsNext !== null && this.commonsResults.length ? 'flex' : 'none';
+    };
+    const run = async (append = false) => {
+      const q = input.value.trim();
+      if (!q) return;
+      this.commonsQuery = q;
+      status.textContent = 'Recherche…';
+      try {
+        const { results, next } = await searchCommons(q, append ? this.commonsNext ?? 0 : 0);
+        this.commonsResults = append ? [...this.commonsResults, ...results] : results;
+        this.commonsNext = next;
+        status.textContent = this.commonsResults.length ? 'Cliquez sur une photo pour l’utiliser. Auteur et licence sont conservés dans le projet.' : 'Aucune photo exploitable : essayez d’autres mots (« façade », nom de la ville…).';
+        show();
+      } catch (e) {
+        console.error(e);
+        status.textContent = 'Recherche impossible pour le moment (connexion ou limite de Wikimedia). Réessayez dans un instant.';
+      }
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') run();
+    });
+    more.addEventListener('click', () => run(true));
+    show();
+    return h('details', { class: 'card adv', open: !!this.commonsResults.length },
+      h('summary', { class: 'card-title' }, '🔎 Chercher une photo libre de droits'),
+      h('p', { class: 'muted small' }, 'Des millions de photos de monuments sous licence libre (Wikimedia Commons). Mentionnez l’auteur et la licence lors de la diffusion.'),
+      h('div', { class: 'row' }, input, h('button', { class: 'btn primary', onclick: () => run() }, 'Chercher')),
+      status, grid, more,
+    );
+  }
+
+  private async loadCommons(r: CommonsResult) {
+    try {
+      this.busy('Téléchargement de la photo…');
+      const resp = await fetch(r.url);
+      if (!resp.ok) throw new Error(String(resp.status));
+      const blob = await resp.blob();
+      await this.loadPhoto(new File([blob], `${r.title}.jpg`, { type: blob.type || 'image/jpeg' }));
+      this.project.name = r.title.slice(0, 60);
+      this.project.credits = { title: r.title, author: r.author, license: r.license, page: r.page };
+      this.scheduleSave();
+      toast(`Photo : ${r.author} — ${r.license}. Crédit conservé dans le projet.`, 'ok', 6000);
+    } catch (e) {
+      console.error(e);
+      toast('Impossible de télécharger cette photo.', 'err');
+    } finally {
+      this.busy(null);
+    }
   }
 
   private thumbCache = new Map<string, Promise<string>>();
@@ -831,6 +900,7 @@ export class App {
     const ratio = h('input', { type: 'text', placeholder: 'ex. 24 × 30', value: this.realAspect ? String(this.realAspect) : '' });
     add(s, 
       h('h2', {}, 'Redresser la façade'),
+      this.project.credits ? h('p', { class: 'muted small credit' }, '📷 ', h('a', { href: this.project.credits.page, target: '_blank', rel: 'noopener' }, this.project.credits.author), ` — ${this.project.credits.license}`) : null,
       h('p', { class: 'muted' }, 'Faites glisser les 4 poignées sur les angles de la façade. Une loupe apparaît pour viser précisément. L’image sera « mise à plat », comme vue parfaitement de face.'),
       h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Dimensions réelles (facultatif, largeur × hauteur)'), ratio),
       h('p', { class: 'muted small' }, 'Si vous connaissez la taille réelle de la façade (en mètres), les proportions seront exactes. Sinon, elles sont estimées.'),
@@ -1474,6 +1544,7 @@ export class App {
     const total = showDuration(this.project.show);
     add(s, 
       h('h2', {}, 'Exporter'),
+      this.project.credits ? h('p', { class: 'muted small credit' }, 'Photo de la façade : ', h('a', { href: this.project.credits.page, target: '_blank', rel: 'noopener' }, this.project.credits.author), ` — ${this.project.credits.license}. Pensez à créditer l’auteur.`) : null,
       h('div', { class: 'card' },
         h('div', { class: 'card-title' }, 'Vidéo pour la projection'),
         select<number>({ label: 'Résolution', value: o.long, options: [1280, 1920, 2560, 3840].map((l) => {
@@ -2748,6 +2819,11 @@ export class App {
     ctx.fillText('LUMIROCK · by Arnisound tools', w - 24 * s, hh - 24 * s);
     ctx.textAlign = 'left';
     ctx.fillText(this.project.name || '', 24 * s, hh - 24 * s);
+    if (this.project.credits) {
+      ctx.font = `500 ${14 * s}px Inter, sans-serif`;
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.fillText(`Photo : ${this.project.credits.author} — ${this.project.credits.license}`, 24 * s, hh - 50 * s);
+    }
   }
 
   /** Mode présentation : plein écran, simulation de nuit, titre. */

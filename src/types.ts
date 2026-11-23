@@ -104,6 +104,7 @@ export interface Project {
   calibrations?: ({ corners: Pt[]; n: number; offsets: Pt[] } | null)[]; // sorties 2, 3, 4
   outputs?: { count: number; overlap: number }; // plusieurs vidéoprojecteurs côte à côte
   schedule?: { on: boolean; start: string; end: string; days: number[] }; // programmation horaire (HH:MM, jours 0 = dimanche)
+  credits?: { title: string; author: string; license: string; page: string }; // photo de façade sous licence libre
 }
 
 export function uid(prefix = 'z') {

@@ -31,6 +31,9 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 - **Calage du projecteur intégré** : 4 coins (perspective) puis grille 3×3 ou 5×5, mire de contours projetée, enregistré avec le projet — plus besoin de logiciel de mapping à côté.
 - **Réaction par bandes** : chaque tableau peut réagir aux basses, médiums ou aigus ; tableau « Égaliseur ».
 - **Montage** : sélection multiple, couper à la tête (S), copier / coller / dupliquer, déplacement groupé.
+- **Voix off et bruitages** sur une piste audio (volume, fondus), mixés à l'export.
+- **Tableaux composés** : un ensemble de tableaux sur plusieurs pistes, enregistré et réinséré d'un clic.
+- **Photos libres de droits** : recherche Wikimedia Commons intégrée, auteur et licence conservés dans le projet et les exports.
 - **Repères musicaux** (M pendant l'écoute) : aimantage et scénarios calés sur vos refrains.
 - **Textes animés** : écrit en lumière, gravé, machine à écrire, lettres qui tombent, néon, contour ; 5 polices.
 - **Palettes** d'ambiance appliquées en un clic à la sélection ou à tout le spectacle.
