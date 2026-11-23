@@ -160,8 +160,8 @@ export class Timeline {
       wc.scale(dpr, dpr);
       wc.clearRect(0, 0, W, 34);
       const g = wc.createLinearGradient(0, 0, 0, 34);
-      g.addColorStop(0, '#ffb547');
-      g.addColorStop(1, '#ff6a3d');
+      g.addColorStop(0, '#e0a23e');
+      g.addColorStop(1, '#b9741f');
       wc.fillStyle = g;
       const perPx = 100 / this.pps;
       for (let x = 0; x < a.duration * this.pps; x++) {

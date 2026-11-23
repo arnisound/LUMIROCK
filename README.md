@@ -1,4 +1,7 @@
-# LUMIROCK
+<p align="center"><img src="public/logo-512.png" width="220" alt="Lumirock"></p>
+
+<h1 align="center">LUMIROCK</h1>
+<p align="center"><em>by Arnisound tools</em> · <a href="https://arnisound.github.io/LUMIROCK/">Ouvrir l'application</a></p>
 
 **Faites parler les pierres.** Lumirock transforme la photo d'un monument en spectacle de *video mapping*, prêt à projeter — directement dans le navigateur, sans rien installer, sans serveur, pour 0 €.
 

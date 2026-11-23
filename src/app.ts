@@ -185,8 +185,8 @@ export class App {
     const can = (s: Step) => (s === 'source' ? true : s === 'redresser' ? !!this.sourceImage : !!this.facade);
     add(hd, 
       h('div', { class: 'brand', onclick: () => this.goto('source') },
-        h('span', { class: 'logo-mark' }),
-        h('span', { class: 'logo' }, 'LUMIROCK'),
+        h('img', { class: 'logo-mark', src: `${import.meta.env.BASE_URL}favicon.png`, alt: '' }),
+        h('span', { class: 'logo-text' }, h('span', { class: 'logo' }, 'LUMIROCK'), h('span', { class: 'by' }, 'by Arnisound tools')),
       ),
       h('nav', { class: 'steps' },
         ...STEPS.map((s, i) =>
@@ -261,6 +261,7 @@ export class App {
     if (this.step === 'source' && !this.facade) {
       this.stage.root.append(
         h('div', { class: 'hero' },
+          h('img', { class: 'hero-logo', src: `${import.meta.env.BASE_URL}logo.webp`, alt: 'Lumirock' }),
           h('div', { class: 'hero-title' }, 'Faites parler les pierres.'),
           h('p', {}, 'Lumirock transforme la photo d’un monument en spectacle de video mapping, prêt à projeter — directement dans votre navigateur, sans rien installer.'),
           h('ol', {},
@@ -332,9 +333,9 @@ export class App {
           ctx.drawImage(big, 0, 0, cv.width, cv.height);
           ctx.filter = 'none';
           // petit effet lumineux sur les contours des calques
-          ctx.strokeStyle = 'rgba(255,190,90,0.9)';
+          ctx.strokeStyle = 'rgba(224,162,62,0.9)';
           ctx.lineWidth = 1.2;
-          ctx.shadowColor = '#ffb547';
+          ctx.shadowColor = '#e0a23e';
           ctx.shadowBlur = 6;
           for (const z of t.zones) {
             ctx.beginPath();

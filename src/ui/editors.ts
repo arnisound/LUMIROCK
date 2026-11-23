@@ -62,7 +62,7 @@ export class QuadEditor {
     ctx.fill('evenodd');
     ctx.restore();
     // grille de perspective
-    ctx.strokeStyle = 'rgba(255,190,90,0.35)';
+    ctx.strokeStyle = 'rgba(224,162,62,0.35)';
     ctx.lineWidth = 1;
     const lerp = (a: number[], b: number[], t: number) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
     for (let i = 1; i < 8; i++) {
@@ -74,7 +74,7 @@ export class QuadEditor {
       ctx.moveTo(c[0], c[1]); ctx.lineTo(d[0], d[1]);
       ctx.stroke();
     }
-    ctx.strokeStyle = '#ffb547';
+    ctx.strokeStyle = '#e0a23e';
     ctx.lineWidth = 2;
     ctx.beginPath();
     q.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
@@ -82,7 +82,7 @@ export class QuadEditor {
     ctx.stroke();
     const labels = ['HG', 'HD', 'BD', 'BG'];
     q.forEach(([x, y], i) => {
-      ctx.fillStyle = i === this.drag ? '#fff' : '#ffb547';
+      ctx.fillStyle = i === this.drag ? '#fff' : '#e0a23e';
       ctx.beginPath();
       ctx.arc(x, y, HANDLE, 0, Math.PI * 2);
       ctx.fill();
@@ -104,14 +104,14 @@ export class QuadEditor {
       const sx = (this.cursor[0] * this.image.width) - (R / Z) * (this.image.width / w);
       const sy = (this.cursor[1] * this.image.height) - (R / Z) * (this.image.height / hh);
       ctx.drawImage(this.image, sx, sy, ((2 * R) / Z) * (this.image.width / w), ((2 * R) / Z) * (this.image.height / hh), ox - R, oy - R, 2 * R, 2 * R);
-      ctx.strokeStyle = '#ffb547';
+      ctx.strokeStyle = '#e0a23e';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(ox - R, oy); ctx.lineTo(ox + R, oy);
       ctx.moveTo(ox, oy - R); ctx.lineTo(ox, oy + R);
       ctx.stroke();
       ctx.restore();
-      ctx.strokeStyle = '#ffb547';
+      ctx.strokeStyle = '#e0a23e';
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(ox, oy, R, 0, Math.PI * 2);
