@@ -241,7 +241,190 @@ export class App {
   }
 
   private renderViewSwitch() {
-    clear(this.timeline.extra).append(this.viewSwitch(), h('button', { class: 'btn icon', title: 'Plein écran (F)', onclick: () => this.fullscreen() }, icon('expand')));
+    clear(this.timeline.extra).append(
+      this.viewSwitch(),
+      h('button', { class: 'btn small', title: 'Mode live : déclencher les tableaux au clavier pendant le spectacle', onclick: () => this.enterLive() }, icon('live'), 'Live'),
+      h('button', { class: 'btn icon', title: 'Sortie projecteur : ouvre une 2e fenêtre à glisser sur le vidéoprojecteur', onclick: () => this.openOutput() }, icon('screen')),
+      h('button', { class: 'btn icon', title: 'Plein écran (F)', onclick: () => this.fullscreen() }, icon('expand')),
+    );
+  }
+
+  // ───────────────────────── Mode live ─────────────────────────
+  live = {
+    on: false,
+    cur: null as { clip: Clip; start: number } | null,
+    prev: null as { clip: Clip; start: number } | null,
+    transStart: 0,
+    transDur: 1.5,
+    transType: 'fondu',
+    master: 1,
+    masterTarget: 1,
+    blackout: false,
+    bpm: 120,
+    beatOrigin: 0,
+    taps: [] as number[],
+  };
+  private liveKeys = '1234567890azeryuiopqsdghjklmwxcvn';
+
+  liveClips(): Clip[] {
+    const all = [...this.project.show.clips, ...(this.project.show.layers ?? []).flatMap((l) => l.clips)];
+    return all.filter((c) => c.effect !== 'vide').slice(0, this.liveKeys.length);
+  }
+
+  private liveNow() {
+    return performance.now() / 1000;
+  }
+
+  enterLive() {
+    if (!this.scene) return;
+    this.pause();
+    this.live.on = true;
+    this.live.bpm = this.audio?.analysis.bpm ?? this.project.show.bpm;
+    this.live.beatOrigin = this.liveNow();
+    this.live.cur = null;
+    this.live.prev = null;
+    this.els.tl.style.display = 'none';
+    this.root.dataset.live = '1';
+    this.renderSide();
+    requestAnimationFrame(() => this.stage.fit());
+    toast('Mode live : touches des pads pour déclencher, Espace = suivant, B = noir, T = tempo, ↑↓ = intensité, Échap pour quitter.', 'info', 7000);
+  }
+
+  exitLive() {
+    this.live.on = false;
+    this.stopAudio();
+    delete this.root.dataset.live;
+    this.els.tl.style.display = 'block';
+    this.renderSide();
+    requestAnimationFrame(() => this.stage.fit());
+    this.dirty = true;
+  }
+
+  liveTrigger(clip: Clip) {
+    const now = this.liveNow();
+    this.live.prev = this.live.cur;
+    this.live.cur = { clip, start: now };
+    this.live.transStart = now;
+    if (this.live.blackout) this.toggleBlackout();
+    this.renderLivePads();
+  }
+
+  toggleBlackout() {
+    this.live.blackout = !this.live.blackout;
+    this.live.masterTarget = this.live.blackout ? 0 : 1;
+    this.renderLivePads();
+  }
+
+  tapTempo() {
+    const now = this.liveNow();
+    const taps = (this.live.taps = [...this.live.taps.filter((t) => now - t < 3), now]);
+    if (taps.length >= 2) {
+      const iv = (taps[taps.length - 1] - taps[0]) / (taps.length - 1);
+      this.live.bpm = Math.round(Math.min(200, Math.max(50, 60 / iv)) * 10) / 10;
+    }
+    this.live.beatOrigin = now;
+    this.renderLivePads();
+  }
+
+  private livePads: HTMLElement | null = null;
+
+  private sideLive(s: HTMLElement) {
+    const L = this.live;
+    this.livePads = h('div', { class: 'pads' });
+    add(s,
+      h('div', { class: 'live-head' }, h('span', { class: 'live-dot' }), h('h2', {}, 'Live'),
+        h('button', { class: 'btn ghost', onclick: () => this.exitLive() }, 'Quitter (Échap)')),
+      h('p', { class: 'muted small' }, 'Cliquez ou tapez la touche d’un pad pour lancer le tableau, avec un fondu. Les pads reprennent les tableaux de votre spectacle.'),
+      this.livePads,
+      h('div', { class: 'card' },
+        select<string>({ label: 'Transition', value: L.transType, options: TRANSITIONS.filter((t) => t.id !== 'cascade').map((t) => ({ value: t.id, label: t.label })), onChange: (v) => (L.transType = v) }),
+        slider({ label: 'Durée du fondu (s)', min: 0, max: 6, step: 0.1, value: L.transDur, onInput: (v) => (L.transDur = v) }),
+        slider({ label: 'Intensité générale (↑ ↓)', min: 0, max: 1.5, step: 0.01, value: L.masterTarget, onInput: (v) => (L.masterTarget = v) }),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn', onclick: () => this.tapTempo() }, 'Tempo (T) · ', h('span', { class: 'live-bpm' }, `${L.bpm} BPM`)),
+          h('button', { class: `btn danger${L.blackout ? ' on' : ''}`, onclick: () => this.toggleBlackout() }, 'Noir (B)'),
+        ),
+        this.audio ? h('button', { class: 'btn ghost wide', onclick: () => {
+          if (this.audioNode) this.stopAudio();
+          else {
+            this.time = 0;
+            this.startAudio();
+            L.bpm = this.audio!.analysis.bpm;
+          }
+          this.renderSide();
+        } }, icon('music'), this.audioNode ? 'Arrêter la musique' : 'Lancer la musique') : null,
+        h('button', { class: 'btn ghost wide', onclick: () => this.openOutput() }, icon('screen'), 'Sortie projecteur (2e fenêtre)'),
+      ),
+    );
+    this.renderLivePads();
+  }
+
+  private renderLivePads() {
+    const pads = this.livePads;
+    if (!pads) return;
+    clear(pads);
+    this.liveClips().forEach((c, i) => {
+      const e = EFFECT_MAP.get(c.effect);
+      pads.append(h('button', {
+        class: `pad${this.live.cur?.clip.id === c.id ? ' on' : ''}`,
+        style: `--c:${e ? CATEGORY_COLORS[e.category] : '#888'}`,
+        onclick: () => this.liveTrigger(c),
+      }, h('kbd', {}, this.liveKeys[i].toUpperCase()), h('span', {}, e?.name ?? c.effect)));
+    });
+    const bpmEl = this.els.side.querySelector('.live-bpm');
+    if (bpmEl) bpmEl.textContent = `${this.live.bpm} BPM`;
+  }
+
+  private renderLiveFrame() {
+    const L = this.live;
+    const now = this.liveNow();
+    L.master += (L.masterTarget - L.master) * 0.12;
+    const loc = (x: { clip: Clip; start: number }) => ({ clip: x.clip, local: (now - x.start) % x.clip.duration });
+    const m = L.transDur > 0 ? Math.min(1, (now - L.transStart) / L.transDur) : 1;
+    const A = L.prev && m < 1 ? loc(L.prev) : null;
+    const B = L.cur ? loc(L.cur) : null;
+    let frame;
+    if (this.audioNode && this.ac && this.audio) frame = audioFrameAt(this.ac.currentTime - this.audioStart, this.audio.analysis, L.bpm);
+    else frame = audioFrameAt(now - L.beatOrigin, null, L.bpm);
+    const mode = this.view === 'jour' ? 'projection' : this.view;
+    this.renderer.renderLive(A, B, A ? m : 1, L.transType, frame, this.project.show, now, mode, L.master);
+  }
+
+  // ───────────────────────── Sortie projecteur ─────────────────────────
+  private outputWin: Window | null = null;
+
+  openOutput() {
+    if (this.outputWin && !this.outputWin.closed) {
+      this.outputWin.focus();
+      return;
+    }
+    const w = window.open('', 'lumirock-sortie', 'popup,width=1280,height=720');
+    if (!w) {
+      toast('La fenêtre a été bloquée : autorisez les fenêtres pop-up pour ce site.', 'err', 6000);
+      return;
+    }
+    w.document.title = 'Lumirock — Sortie projecteur';
+    w.document.body.style.cssText = 'margin:0;background:#000;overflow:hidden;cursor:none';
+    const v = w.document.createElement('video');
+    v.autoplay = true;
+    v.muted = true;
+    v.playsInline = true;
+    v.style.cssText = 'width:100vw;height:100vh;object-fit:contain;background:#000;display:block';
+    v.srcObject = this.stage.gl.captureStream(60);
+    w.document.body.appendChild(v);
+    const hint = w.document.createElement('div');
+    hint.textContent = 'Glissez cette fenêtre sur le vidéoprojecteur puis double-cliquez pour le plein écran';
+    hint.style.cssText = 'position:fixed;left:50%;top:20px;transform:translateX(-50%);color:#e0a23e;font:14px sans-serif;background:rgba(0,0,0,.7);padding:8px 14px;border-radius:8px;transition:opacity 1s';
+    w.document.body.appendChild(hint);
+    setTimeout(() => (hint.style.opacity = '0'), 6000);
+    w.document.addEventListener('dblclick', () => (w.document.fullscreenElement ? w.document.exitFullscreen() : w.document.documentElement.requestFullscreen()));
+    this.outputWin = w;
+    if (this.view !== 'projection') {
+      this.view = 'projection';
+      this.renderViewSwitch();
+    }
+    this.dirty = true;
+    toast('Sortie projecteur ouverte (vue « Projection » activée).', 'ok');
   }
 
   goto(step: Step) {
@@ -297,7 +480,8 @@ export class App {
   // ───────────────────────── Panneau latéral ─────────────────────────
   renderSide() {
     const s = clear(this.els.side);
-    if (this.step === 'source') this.sideSource(s);
+    if (this.live.on) this.sideLive(s);
+    else if (this.step === 'source') this.sideSource(s);
     else if (this.step === 'redresser') this.sideRectify(s);
     else if (this.step === 'calques') this.sideLayers(s);
     else if (this.step === 'spectacle') this.sideShow(s);
@@ -1210,7 +1394,7 @@ export class App {
     r.used = this.frameNo;
     const dur = v.duration || 1;
     const target = ((Math.max(0, local) % dur) + dur) % dur;
-    if (this.playing && !this.exportingFrames) {
+    if ((this.playing || this.live.on) && !this.exportingFrames) {
       if (v.paused) v.play().catch(() => undefined);
       if (Math.abs(v.currentTime - target) > 0.35) v.currentTime = target;
     } else {
@@ -1318,8 +1502,14 @@ export class App {
       this.timeline.setTime(this.time, true);
       this.dirty = true;
     }
-    if (this.dirty && this.scene && this.facade) {
-      const { w, h: hh } = this.stage.previewSize(this.playing ? 1280 : 1600);
+    const outputOpen = !!this.outputWin && !this.outputWin.closed;
+    if (this.live.on && this.scene) {
+      const { w, h: hh } = this.stage.previewSize(outputOpen ? 1920 : 1280);
+      this.renderer.resize(w, hh);
+      this.renderLiveFrame();
+      this.frameNo++;
+    } else if (this.dirty && this.scene && this.facade) {
+      const { w, h: hh } = this.stage.previewSize(outputOpen ? 1920 : this.playing ? 1280 : 1600);
       this.renderer.resize(w, hh);
       if (this.step === 'calques') {
         if (this.mapView === 'photo') this.renderer.showMap('albedo');
@@ -1600,6 +1790,23 @@ export class App {
     window.addEventListener('keydown', (e) => {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (this.live.on && !e.ctrlKey && !e.metaKey) {
+        const k = e.key.toLowerCase();
+        const idx = this.liveKeys.indexOf(k);
+        const clips = this.liveClips();
+        if (e.key === 'Escape') this.exitLive();
+        else if (k === 'b' && idx < 0) this.toggleBlackout();
+        else if (idx >= 0 && idx < clips.length) this.liveTrigger(clips[idx]);
+        else if (k === 't' && idx < 0) this.tapTempo();
+        else if (e.code === 'Space') {
+          e.preventDefault();
+          const cur = clips.findIndex((c) => c.id === this.live.cur?.clip.id);
+          if (clips.length) this.liveTrigger(clips[(cur + 1) % clips.length]);
+        } else if (e.key === 'ArrowUp') this.live.masterTarget = Math.min(1.5, this.live.masterTarget + 0.1);
+        else if (e.key === 'ArrowDown') this.live.masterTarget = Math.max(0, this.live.masterTarget - 0.1);
+        else if (k === 'f' && idx < 0) this.fullscreen();
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
         this.saveProjectFile();

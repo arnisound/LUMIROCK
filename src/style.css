@@ -265,3 +265,16 @@ details.card.adv > summary::-webkit-details-marker { display: none; }
 details.card.adv > summary::after { content: '▸'; margin-left: auto; color: var(--muted); transition: transform 0.15s; }
 details.card.adv[open] > summary { margin-bottom: 10px; }
 details.card.adv[open] > summary::after { transform: rotate(90deg); }
+
+/* ─── mode live ─── */
+.live-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.live-head h2 { margin: 0; flex: 1; }
+.live-dot { width: 11px; height: 11px; border-radius: 50%; background: #ff3b4f; box-shadow: 0 0 12px #ff3b4f; animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+.pads { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.pad { position: relative; min-height: 64px; border-radius: 10px; border: 1px solid var(--line2); background: linear-gradient(180deg, color-mix(in srgb, var(--c) 22%, #1a1f2b), #141821); cursor: pointer; padding: 8px 6px 6px; text-align: left; display: flex; flex-direction: column; justify-content: flex-end; font-size: 12px; font-weight: 600; transition: 0.12s; }
+.pad:hover { border-color: var(--c); }
+.pad:active { transform: scale(0.97); }
+.pad.on { border-color: #fff; box-shadow: 0 0 0 2px var(--c), 0 0 22px -4px var(--c); background: linear-gradient(180deg, color-mix(in srgb, var(--c) 45%, #1a1f2b), #1a1f2b); }
+.pad kbd { position: absolute; top: 6px; left: 7px; font: 700 10px Inter, sans-serif; color: var(--muted); background: var(--bg); border: 1px solid var(--line2); border-radius: 4px; padding: 1px 5px; }
+#app[data-live] .stage-frame { box-shadow: 0 0 0 2px #ff3b4f, 0 30px 80px -20px rgba(0, 0, 0, 0.8); }
