@@ -34,6 +34,8 @@ uniform float uSeed;
 uniform float uZoneCount;
 uniform float uQuality;    // 0 aperçu, 1 qualité finale
 uniform float uAuxAspect;  // proportions du média importé
+uniform vec4 uLetters[64]; // boîtes des lettres du texte (x0, y0, x1, y1)
+uniform float uLetterCount;
 uniform vec3 uColA;
 uniform vec3 uColB;
 uniform float uIntensity;

@@ -337,3 +337,13 @@ details.card.adv[open] > summary::after { transform: rotate(90deg); }
 .meter { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
 .meter-bar { width: 26px; height: 80px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line2); position: relative; overflow: hidden; }
 .meter-bar i { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--grad); transition: height 0.06s; }
+
+.palettes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 8px; }
+.pal { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 7px 4px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg); cursor: pointer; font-size: 11px; color: var(--muted); }
+.pal:hover { border-color: var(--accent); color: var(--text); }
+.pal-sw { width: 100%; height: 22px; border-radius: 6px; }
+.pal-custom { align-items: center; }
+.pal-custom input[type='color'] { flex: none; }
+
+.tl-marker { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed rgba(224, 162, 62, 0.8); z-index: 5; pointer-events: none; }
+.tl-marker span { pointer-events: auto; cursor: pointer; position: absolute; top: 0; left: -1px; font: 700 9px Inter, sans-serif; color: #1b1206; background: var(--accent); padding: 1px 4px; border-radius: 0 4px 4px 0; white-space: nowrap; }

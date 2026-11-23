@@ -72,6 +72,7 @@ export interface MediaItem {
 export interface Show {
   clips: Clip[]; // piste principale
   layers?: Layer[];
+  markers?: { t: number; label?: string }[]; // repères posés sur la musique
   bpm: number;
   master: { brightness: number; bloom: number; relief: number; vignette: number; ambient?: number };
 }

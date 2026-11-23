@@ -823,36 +823,104 @@ vec3 effect(vec2 uv) {
 }`,
   },
   {
-    id: 'texte', name: 'Texte lumineux', category: 'Illusions', mood: 'calme', defaultDuration: 8,
-    description: 'Un message s’écrit en lumière ou se grave dans la pierre (nom de la commune, date, vœux…).',
+    id: 'texte', name: 'Texte animé', category: 'Illusions', mood: 'calme', defaultDuration: 8,
+    description: 'Un message en lumière : écrit, gravé, tapé à la machine, lettres qui tombent, néon ou contour (nom de la commune, date, vœux…).',
     tags: ['intro', 'noel', 'mariage', 'national', 'patrimoine'],
     params: [
       { key: 'text', label: 'Texte', type: 'text', slot: 'aux', default: 'Joyeux Noël' },
-      I(), CA('#ffe08a', 'Couleur du texte'), CB('#1b2a55', 'Fond'),
-      SEL('style', 'Style', 'uParamC', ['Écrit en lumière', 'Gravé dans la pierre'], 0),
+      SEL('font', 'Police', 'aux', ['Classique (Cinzel)', 'Gothique', 'Manuscrite', 'Affiche', 'Moderne'], 0),
+      I(), CA('#ffe08a', 'Couleur du texte'), CB('#1b2a55', 'Fond / 2e couleur'),
+      SEL('style', 'Animation', 'uParamC', ['Écrit en lumière', 'Gravé dans la pierre', 'Machine à écrire', 'Lettres qui tombent', 'Néon qui clignote', 'Contour lumineux'], 0),
       R('y', 'Position verticale', 'uParamA', 0.5), R('size', 'Taille', 'uParamB', 0.5),
     ],
     glsl: `
 float txt(vec2 uv) { return texture(uAux, uv).r; }
+// index de la lettre (0 = aucune) : rapport vert / rouge de la texture
+int letterAt(vec2 uv) {
+  vec4 t = texture(uAux, uv);
+  if (t.r < 0.25) return -1;
+  return int(t.g / t.r * 255.0 + 0.5) - 1;
+}
+float glowAt(vec2 uv, float spread) {
+  vec2 px = 1.5 / uRes;
+  float g = 0.0;
+  for (int i = -3; i <= 3; i++) for (int j = -3; j <= 3; j++) g += txt(uv + vec2(float(i), float(j)) * px * spread);
+  return g / 49.0;
+}
 vec3 effect(vec2 uv) {
+  int style = int(uParamC + 0.5);
   float a = txt(uv);
   vec2 px = 1.5 / uRes;
-  float glow = 0.0;
-  for (int i = -3; i <= 3; i++) for (int j = -3; j <= 3; j++) glow += txt(uv + vec2(float(i), float(j)) * px * 3.0);
-  glow /= 49.0;
-  float sweep = uP * 1.6 - 0.2;
-  float rev = sstep(uv.x - 0.02, uv.x + 0.02, sweep);
-  float head = sstep(0.03, 0.0, abs(sweep - uv.x));
   vec3 bg = uColB * (0.25 + 0.4 * diffuseAt(uv, normalize(vec3(-0.3, 0.6, 0.8))));
-  if (uParamC < 0.5) {
+  float n = max(uLetterCount, 1.0);
+  if (style == 0) {
+    float glow = glowAt(uv, 3.0);
+    float sweep = uP * 1.6 - 0.2;
+    float rev = sstep(uv.x - 0.02, uv.x + 0.02, sweep);
+    float head = sstep(0.03, 0.0, abs(sweep - uv.x));
     return bg + uColA * (a * 1.6 + glow * 1.2) * rev + vec3(1.0) * a * head * 2.0;
   }
+  if (style == 1) {
+    float sweep = uP * 1.6 - 0.2;
+    float rev = sstep(uv.x - 0.02, uv.x + 0.02, sweep);
+    float gx = txt(uv + vec2(px.x, 0.0)) - txt(uv - vec2(px.x, 0.0));
+    float gy = txt(uv + vec2(0.0, px.y)) - txt(uv - vec2(0.0, px.y));
+    float emb = (gx * -0.7 + gy * 0.7);
+    vec3 lit = vec3(1.0, 0.95, 0.85) * (0.6 + 0.3 * diffuseAt(uv, normalize(vec3(-0.5, 0.5, 0.8))));
+    return max(lit * (1.0 - a * 0.65 * rev) + vec3(1.0) * max(emb, 0.0) * 2.0 * rev - vec3(0.6) * max(-emb, 0.0) * rev, 0.0);
+  }
+  if (style == 2) {
+    // machine à écrire : une lettre après l'autre, curseur qui clignote
+    float shown = uP * 1.35 * n;
+    int k = letterAt(uv);
+    float vis = k >= 0 ? step(float(k) + 1.0, shown + 0.999) : 0.0;
+    float fresh = k >= 0 ? sstep(1.2, 0.0, shown - float(k)) : 0.0;
+    vec3 c = bg + uColA * a * vis * (1.4 + fresh * 1.5) + uColA * glowAt(uv, 2.0) * vis * 0.6;
+    int cur = int(clamp(floor(shown), 0.0, n - 1.0));
+    vec4 bx = uLetters[cur];
+    float cx = shown >= n ? bx.z + 0.004 : bx.x - 0.004;
+    float bar = step(abs(uv.x - cx), 0.0025) * step(bx.y, uv.y) * step(uv.y, bx.w) * step(0.5, fract(uT * 1.8));
+    return c + uColA * bar * 1.8;
+  }
+  if (style == 3) {
+    // lettres qui tombent du ciel et rebondissent
+    vec3 c = bg;
+    for (int i = 0; i < 64; i++) {
+      if (float(i) >= uLetterCount) break;
+      float t0 = float(i) / n * 0.55;
+      float l = sat((uP * 1.25 - t0) / 0.28);
+      float b = 1.0 - l;
+      float bounce = abs(sin(l * PI * 2.5)) * (1.0 - l) * 0.08;
+      float off = b * b * 0.9 + bounce;
+      vec2 q = uv - vec2(0.0, off);
+      vec4 bx = uLetters[i];
+      if (q.x < bx.x || q.x > bx.z || q.y < bx.y || q.y > bx.w) continue;
+      if (letterAt(q) != i) continue;
+      float land = sstep(0.12, 0.0, abs(l - 1.0)) * sstep(0.0, 0.05, l);
+      c += uColA * txt(q) * (1.3 + land * 1.5) * sstep(0.0, 0.05, l);
+    }
+    return c;
+  }
+  if (style == 4) {
+    // néon : halo, grésillement, lettres qui s'éteignent
+    int k = letterAt(uv);
+    float on = 1.0;
+    float fr = floor(uT * 14.0);
+    if (k >= 0) on = step(0.12, hash11(fr * 0.37 + float(k) * 7.1)) * sstep(float(k) / n * 0.5, float(k) / n * 0.5 + 0.05, uP);
+    float glow = glowAt(uv, 4.0) * sstep(0.0, 0.1, uP);
+    float buzz = 0.85 + 0.15 * sin(uT * 120.0);
+    return bg * 0.5 + uColA * a * 1.8 * on * buzz + uColA * glow * 1.4 * buzz + uColB * glowAt(uv, 9.0) * 0.6;
+  }
+  // contour lumineux
   float gx = txt(uv + vec2(px.x, 0.0)) - txt(uv - vec2(px.x, 0.0));
   float gy = txt(uv + vec2(0.0, px.y)) - txt(uv - vec2(0.0, px.y));
-  float emb = (gx * -0.7 + gy * 0.7);
-  vec3 lit = vec3(1.0, 0.95, 0.85) * (0.6 + 0.3 * diffuseAt(uv, normalize(vec3(-0.5, 0.5, 0.8))));
-  vec3 c = lit * (1.0 - a * 0.65 * rev) + vec3(1.0) * max(emb, 0.0) * 2.0 * rev - vec3(0.6) * max(-emb, 0.0) * rev;
-  return max(c, 0.0) + uColA * a * glow * head * 2.0;
+  float edge = sat(length(vec2(gx, gy)) * 2.5);
+  float sweep = uP * 1.5 - 0.15;
+  float rev = sstep(uv.x + 0.03, uv.x - 0.03, sweep) ;
+  rev = 1.0 - rev;
+  float head = sstep(0.025, 0.0, abs(sweep - uv.x));
+  float fill = sstep(0.75, 1.0, uP);
+  return bg + uColA * edge * 1.8 * step(uv.x, sweep) + vec3(1.0) * edge * head * 2.5 + uColB * a * fill * 0.9 + uColA * glowAt(uv, 3.0) * 0.4 * step(uv.x, sweep);
 }`,
   },
   {
@@ -1199,6 +1267,55 @@ vec3 effect(vec2 uv) {
     c = mix(uColA, uColB, r) * uSpec[b] * ring * (0.6 + uParamA) * 1.4;
   }
   return c * stone;
+}`,
+  },
+  {
+    id: 'etincelles', name: 'Étincelles d’architecture', category: 'Architecture', mood: 'moyen', defaultDuration: 12,
+    description: 'Des comètes de lumière courent le long des contours de chaque élément et des étincelles ruissellent des corniches.',
+    tags: ['noel', 'national', 'mariage', 'patrimoine'],
+    params: [I(), S(), CA('#ffd36b', 'Comètes'), CB('#ff7a2b', 'Étincelles'), R('comets', 'Nombre de comètes', 'uParamA', 0.5), R('sparks', 'Étincelles', 'uParamB', 0.6), R('stone', 'Contours de la pierre', 'uParamC', 0.3)],
+    glsl: `
+vec3 effect(vec2 uv) {
+  float t = uT * uSpeed;
+  float ez = edgeZone(uv);
+  vec3 c = uColA * glowLines(uv) * 0.08;
+  int id = zoneId(uv);
+  float gl = glowLines(uv);
+  for (int r = 1; r <= 3 && id == 0; r++) {
+    vec2 px = float(r * 3) / uZoneRes;
+    for (int k = 0; k < 8 && id == 0; k++) {
+      float a = float(k) * PI / 4.0;
+      id = zoneId(uv + vec2(cos(a), sin(a)) * px);
+    }
+  }
+  if (id > 0) {
+    vec4 g = zoneGeom(id);
+    vec4 m = zoneMeta(id);
+    vec2 d = asp(uv) - asp(g.xy);
+    float ang = (atan(d.y, d.x) + PI) / TAU;
+    float heads = 0.0;
+    int N = 1 + int(uParamA * 3.0);
+    for (int k = 0; k < 4; k++) {
+      if (k >= N) break;
+      float hp = fract(t * 0.22 * (0.7 + m.x) + m.x * 3.0 + float(k) / float(N));
+      float dd = fract(hp - ang + 1.0);
+      heads += exp(-dd * 18.0) + exp(-dd * 120.0) * 2.0;
+    }
+    c += uColA * (ez * 2.2 + gl * 1.4) * heads + uColA * ez * 0.25;
+  }
+  // contours de la pierre parcourus par une lueur
+  float wave = pow(0.5 + 0.5 * sin(uv.y * 9.0 - t * 2.0 + fbm(asp(uv) * 3.0) * 4.0), 8.0);
+  c += uColA * edgeImg(uv) * uParamC * wave * 0.9;
+  // étincelles qui tombent sous les lignes
+  float above = 0.0;
+  for (int k = 1; k <= 6; k++) above = max(above, edgeZone(uv + vec2(0.0, float(k) * 0.018)) * (1.0 - float(k) / 7.0));
+  vec2 q = vec2(uv.x * uAspect * 70.0, uv.y * 9.0 + t * (1.6 + uBeat * 0.6));
+  vec2 cell = floor(q);
+  vec2 f = fract(q) - vec2(0.5, 0.5) - (hash22(cell) - 0.5) * vec2(0.6, 0.8);
+  float on = step(1.0 - uParamB * 0.7, hash21(cell + 3.1));
+  float spark = on * exp(-length(f * vec2(2.2, 0.9)) * 6.0) * 5.0;
+  c += uColB * spark * sat(above * 2.0) * (0.7 + 0.3 * sin(t * 20.0 + cell.x));
+  return c * sstep(0.0, 0.06, uP);
 }`,
   },
   // ───────────────────────────── MÉDIAS ─────────────────────────────

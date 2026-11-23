@@ -17,6 +17,7 @@ export interface TimelineEvents {
   togglePlay: () => void;
   home: () => void;
   addTrack: () => void;
+  removeMarker: (index: number) => void;
 }
 
 interface TrackView {
@@ -209,6 +210,21 @@ export class Timeline {
     }
     // pistes
     clear(this.tracks);
+    this.content.querySelectorAll('.tl-marker').forEach((m) => m.remove());
+    (this.show.markers ?? []).forEach((mk, i) => {
+      const el = h('div', { class: 'tl-marker', style: `left:${8 + mk.t * this.pps}px`, title: `${mk.label ?? 'Repère'} — ${fmtTime(mk.t)} (clic : aller ici · clic droit : supprimer)` },
+        h('span', {}, mk.label ?? String(i + 1)));
+      el.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        if (e.button === 2) return;
+        this.ev.seek(mk.t);
+      });
+      el.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        this.ev.removeMarker(i);
+      });
+      this.content.appendChild(el);
+    });
     for (const view of views) {
       const row = h('div', { class: `tl-track${view.id === this.activeTrack ? ' active' : ''}${view.muted ? ' muted' : ''}`, 'data-track': view.id },
         h('span', { class: 'tl-track-name' }, view.name));
@@ -222,7 +238,7 @@ export class Timeline {
   private snapTime(t: number, selfId: string) {
     if (!this.snap || !this.show) return t;
     const thr = 9 / this.pps;
-    const cands: number[] = [0, this.time];
+    const cands: number[] = [0, this.time, ...(this.show.markers ?? []).map((m) => m.t)];
     const lists = [this.show.clips, ...(this.show.layers ?? []).map((l) => l.clips)];
     for (const list of lists) for (const tm of trackTimings(list)) if (tm.clip.id !== selfId) cands.push(tm.start, tm.end);
     let best = t, bd = thr;

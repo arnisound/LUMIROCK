@@ -167,6 +167,14 @@ function seedFrom(id: string) {
   return (Math.abs(h) % 1000) / 10;
 }
 
+export const FONTS = [
+  { css: '"Cinzel", Georgia, serif', weight: 600 },
+  { css: '"UnifrakturMaguntia", "Old English Text MT", serif', weight: 400 },
+  { css: '"Great Vibes", "Brush Script MT", cursive', weight: 400 },
+  { css: '"Bebas Neue", Impact, sans-serif', weight: 400 },
+  { css: '"Montserrat", Inter, sans-serif', weight: 700 },
+];
+
 export interface ClipTiming {
   clip: Clip;
   start: number;
@@ -226,7 +234,7 @@ export class Renderer {
     albedo: null, depth: null, normal: null, zones: null, edges: null, zoneInfo: null,
   };
   private blackTex: WebGLTexture;
-  private aux = new Map<string, { key: string; tex: WebGLTexture }>();
+  private aux = new Map<string, { key: string; tex: WebGLTexture; letters: Float32Array; count: number }>();
   private targets: { a: Target; b: Target; mix: Target; acc0: Target; acc1: Target; half: Target; q1: Target; q2: Target; e1: Target; e2: Target } | null = null;
   private w = 0;
   private h = 0;
@@ -340,15 +348,26 @@ export class Renderer {
   /** Qualité du rendu : 0 = aperçu, 1 = finale (ombres plus fines). */
   quality = 0;
 
+  /** Appelé quand une police finit de se charger (pour redessiner). */
+  onNeedRedraw: (() => void) | null = null;
+  private letters = new Float32Array(256);
+  private letterCount = 0;
+
   private auxFor(clip: Clip, local: number): WebGLTexture {
+    this.letterCount = 0;
     if (clip.effect === 'media') return this.mediaFor(clip, local);
     const text = clip.params.text;
     if (typeof text !== 'string' || !this.scene) return this.blackTex;
     const y = Number(clip.params.y ?? 0.5);
     const size = Number(clip.params.size ?? 0.5);
-    const key = `${text}|${y}|${size}|${this.scene.width}x${this.scene.height}`;
+    const family = FONTS[Number(clip.params.font ?? 0)] ?? FONTS[0];
+    const key = `${text}|${y}|${size}|${family}|${this.scene.width}x${this.scene.height}`;
     const cached = this.aux.get(clip.id);
-    if (cached && cached.key === key) return cached.tex;
+    if (cached && cached.key === key) {
+      this.letters.set(cached.letters);
+      this.letterCount = cached.count;
+      return cached.tex;
+    }
     if (cached) this.gl.deleteTexture(cached.tex);
     const W = 1600;
     const H = Math.round((W * this.scene.height) / this.scene.width);
@@ -358,22 +377,46 @@ export class Renderer {
     const ctx = cv.getContext('2d')!;
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#fff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    ctx.textBaseline = 'alphabetic';
     const lines = text.split('\n');
     let fs = (0.04 + size * 0.14) * H;
-    ctx.font = `600 ${fs}px "Cinzel", "Trajan Pro", Georgia, serif`;
+    const fontSpec = (px: number) => `${family.weight} ${px}px ${family.css}`;
+    if (document.fonts && !document.fonts.check(fontSpec(40))) {
+      document.fonts.load(fontSpec(40)).then(() => {
+        this.aux.delete(clip.id);
+        this.onNeedRedraw?.();
+      }).catch(() => undefined);
+    }
+    ctx.font = fontSpec(fs);
     const maxW = Math.max(...lines.map((l) => ctx.measureText(l).width));
     if (maxW > W * 0.9) {
       fs *= (W * 0.9) / maxW;
-      ctx.font = `600 ${fs}px "Cinzel", "Trajan Pro", Georgia, serif`;
+      ctx.font = fontSpec(fs);
     }
     const cy = (1 - y) * H;
-    lines.forEach((l, i) => ctx.fillText(l, W / 2, cy + (i - (lines.length - 1) / 2) * fs * 1.15));
+    const boxes = new Float32Array(256);
+    let k = 0;
+    lines.forEach((l, li) => {
+      const base = cy + (li - (lines.length - 1) / 2) * fs * 1.15 + fs * 0.35;
+      let x = W / 2 - ctx.measureText(l).width / 2;
+      for (const ch of l) {
+        const w = ctx.measureText(ch).width;
+        if (ch.trim() && k < 254) {
+          // rouge = forme, vert = numéro de lettre (rapport vert/rouge, robuste à l'anticrénelage)
+          ctx.fillStyle = `rgb(255,${k + 1},0)`;
+          ctx.fillText(ch, x, base);
+          if (k < 64) boxes.set([x / W - 0.004, 1 - (base + fs * 0.25) / H, (x + w) / W + 0.004, 1 - (base - fs * 0.95) / H], k * 4);
+          k++;
+        }
+        x += w;
+      }
+    });
     const img = ctx.getImageData(0, 0, W, H);
     const tex = this.uploadRGBA(W, H, new Uint8Array(img.data.buffer));
-    this.aux.set(clip.id, { key, tex });
+    const count = Math.min(64, k);
+    this.aux.set(clip.id, { key, tex, letters: boxes, count });
+    this.letters.set(boxes);
+    this.letterCount = count;
     return tex;
   }
 
@@ -428,6 +471,8 @@ export class Renderer {
       .tex('uZones', 3, this.tex.zones).tex('uEdges', 4, this.tex.edges).tex('uZoneInfo', 5, this.tex.zoneInfo)
       .tex('uAux', 6, this.auxFor(clip, local + t0));
     p.f('uAuxAspect', this.auxAspect);
+    this.gl.uniform4fv(p.loc('uLetters'), this.letters);
+    p.f('uLetterCount', this.letterCount);
     p.v2('uRes', target.w, target.h).v2('uZoneRes', s.width, s.height).f('uAspect', s.width / s.height);
     const t = Math.max(local, 0) + t0;
     p.f('uTime', time).f('uT', t).f('uP', prog).f('uDur', fullDur).f('uQuality', this.quality);

@@ -113,7 +113,23 @@ export const SCENARIOS: Scenario[] = [
 
 // Effets dont les couleurs sont « libres » : la palette du scénario s'y applique.
 // Les autres (neige, eau, feu, soleil…) gardent leurs couleurs naturelles.
-const PALETTE_FX = new Set(['vitrail', 'mosaique', 'aurore', 'portails', 'scan', 'puzzle', 'faisceaux', 'neon', 'vague', 'battement', 'kaleido', 'glitch', 'onde', 'lasers', 'pixels', 'aquarelle', 'matrix']);
+export const PALETTE_FX = new Set(['vitrail', 'mosaique', 'aurore', 'portails', 'scan', 'puzzle', 'faisceaux', 'neon', 'vague', 'battement', 'kaleido', 'glitch', 'onde', 'lasers', 'pixels', 'aquarelle', 'matrix', 'egaliseur', 'etincelles', 'texte', 'dessin']);
+
+/** Palettes d'ambiance applicables en un clic. */
+export const PALETTES: { name: string; colors: [string, string] }[] = [
+  { name: 'Noël', colors: ['#ffcf6b', '#e0263f'] },
+  { name: 'Halloween', colors: ['#ff7a1a', '#8a2be2'] },
+  { name: 'Tricolore', colors: ['#2453ff', '#ff2b3b'] },
+  { name: 'Océan', colors: ['#20d3ff', '#1a3cff'] },
+  { name: 'Coucher de soleil', colors: ['#ffb347', '#ff3d7f'] },
+  { name: 'Néon', colors: ['#ff2bd6', '#2bd9ff'] },
+  { name: 'Or & ivoire', colors: ['#ffd27a', '#fff3dc'] },
+  { name: 'Printemps', colors: ['#7ce36b', '#ff8ab8'] },
+  { name: 'Glace', colors: ['#bfe8ff', '#7a8cff'] },
+  { name: 'Braise', colors: ['#ff5a1f', '#ffd36b'] },
+  { name: 'Forêt', colors: ['#2fbf4a', '#d9ff7a'] },
+  { name: 'Royal', colors: ['#6a3cff', '#ffcf4a'] },
+];
 
 function makeClip(effect: string, duration: number, params: Record<string, ParamValue> = {}, transition = 'fondu'): Clip {
   return {
@@ -139,7 +155,7 @@ function toBars(d: number, bpm: number) {
 }
 
 /** Compose un spectacle complet à partir d'un scénario, calé sur la musique si elle est fournie. */
-export function compose(scenarioId: string, total: number, analysis: AudioAnalysis | null, bpm: number): Clip[] {
+export function compose(scenarioId: string, total: number, analysis: AudioAnalysis | null, bpm: number, markers: number[] = []): Clip[] {
   const beatsPerMin = analysis?.bpm ?? bpm;
   const sc = scenarioId === 'surprise' ? surprise() : SCENARIOS.find((s) => s.id === scenarioId)!;
   const weights = sc.steps.map((s) => s.weight ?? 1);
@@ -150,13 +166,17 @@ export function compose(scenarioId: string, total: number, analysis: AudioAnalys
     const e = EFFECT_MAP.get(step.effect);
     if (!e) return;
     let d = (weights[i] / wsum) * total;
-    // calage sur une section musicale proche
-    if (analysis) {
-      const target = t + d;
-      const near = analysis.sections.find((s) => Math.abs(s - target) < d * 0.3);
-      if (near && i < sc.steps.length - 1) d = near - t;
+    // calage sur un marqueur posé par l'utilisateur (prioritaire), sinon sur une section musicale proche
+    const target = t + d;
+    const mk = markers.filter((m) => m > t + 1).sort((a, b) => Math.abs(a - target) - Math.abs(b - target))[0];
+    if (mk !== undefined && Math.abs(mk - target) < d * 0.6 && i < sc.steps.length - 1) d = mk - t;
+    else {
+      if (analysis) {
+        const near = analysis.sections.find((s) => Math.abs(s - target) < d * 0.3);
+        if (near && i < sc.steps.length - 1) d = near - t;
+      }
+      d = toBars(d, beatsPerMin);
     }
-    d = toBars(d, beatsPerMin);
     if (i === sc.steps.length - 1) d = Math.max(total - t, (4 * 60) / beatsPerMin);
     const params: Record<string, ParamValue> = {};
     const hasCol = e.params.some((p) => p.key === 'colorA');

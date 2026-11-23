@@ -5,7 +5,7 @@ import { detectOpenings } from './analysis/detect';
 import { AudioAnalysis, analyseAudio, audioFrameAt, decodeAudio } from './audio';
 import { CATEGORIES, CATEGORY_COLORS, COMMON_PARAMS, EFFECTS, EFFECT_MAP, ParamDef, TRANSITIONS } from './effects/library';
 import { Renderer, SceneMaps, ViewMode, freezeStarts, showDuration, trackTimings } from './gl/renderer';
-import { SCENARIOS, compose, defaultShow, newClip } from './scenarios';
+import { PALETTES, PALETTE_FX, SCENARIOS, compose, defaultShow, newClip } from './scenarios';
 import { TEMPLATES } from './templates';
 import { Clip, Layer, MediaItem, Project, Pt, ZONE_TYPES, ZoneTypeKey, uid, zoneType } from './types';
 import { History } from './history';
@@ -178,9 +178,15 @@ export class App {
       togglePlay: () => this.togglePlay(),
       home: () => this.seek(0),
       addTrack: () => this.addLayer(),
+      removeMarker: (i) => {
+        this.project.show.markers?.splice(i, 1);
+        this.refreshShowUI();
+        this.scheduleSave();
+      },
     });
     this.history.onChange = () => this.renderUndo();
     this.renderer.mediaProvider = (id, clip, local) => this.mediaSource(id, clip, local);
+    this.renderer.onNeedRedraw = () => (this.dirty = true);
     this.stage.onResize = () => {
       this.dirty = true;
     };
@@ -780,7 +786,7 @@ export class App {
     durInput.addEventListener('change', () => (this.newScenarioDur = Number(durInput.value) || 120));
     const run = (id: string) => {
       const total = this.audio ? this.audio.analysis.duration : Number(durInput.value) || 120;
-      this.project.show.clips = compose(id, total, this.audio?.analysis ?? null, this.project.show.bpm);
+      this.project.show.clips = compose(id, total, this.audio?.analysis ?? null, this.project.show.bpm, (this.project.show.markers ?? []).map((m) => m.t));
       this.selectedClip = null;
       this.seek(0);
       this.refreshShowUI();
@@ -1118,6 +1124,24 @@ export class App {
           ...['Basses', 'Médiums', 'Aigus'].map((l) => h('div', { class: 'meter' }, h('div', { class: 'meter-bar' }, h('i', {})), h('span', {}, l)))),
         h('p', { class: 'muted small' }, 'Dans « Réglages › Options avancées », chaque tableau peut réagir aux basses, aux médiums ou aux aigus — par exemple le portail qui pulse sur la grosse caisse et les fenêtres qui scintillent sur les cymbales. Essayez aussi le tableau « Égaliseur ».'),
       ),
+      h('div', { class: 'card' },
+        h('div', { class: 'card-title' }, icon('flag'), ' Repères'),
+        h('p', { class: 'muted small' }, 'Lancez la lecture et appuyez sur M à chaque changement important (couplet, refrain, final). Les scénarios se caleront sur ces repères, et les tableaux s’y aimantent.'),
+        (this.project.show.markers ?? []).length
+          ? h('div', { class: 'kf-chips' }, ...(this.project.show.markers ?? []).map((m, i) => h('span', { class: 'kf-chip' },
+              h('button', { class: 'kf-go', onclick: () => this.seek(m.t) }, `${m.label ?? i + 1} · ${fmtTime(m.t)}`),
+              h('button', { class: 'kf-x', onclick: () => {
+                this.project.show.markers!.splice(i, 1);
+                this.refreshShowUI();
+                this.scheduleSave();
+              } }, '×'))))
+          : null,
+        (this.project.show.markers ?? []).length ? h('button', { class: 'btn ghost wide', onclick: () => {
+          this.project.show.markers = [];
+          this.refreshShowUI();
+          this.scheduleSave();
+        } }, 'Effacer tous les repères') : null,
+      ),
       h('button', { class: 'btn primary wide', onclick: () => this.snapToMusic() }, 'Caler la durée des tableaux sur la musique'),
       h('button', { class: 'btn ghost wide', onclick: () => {
         this.showTab = 'scenarios';
@@ -1132,12 +1156,60 @@ export class App {
     );
   }
 
+  private palAll = false;
+  private customPal: [string, string] = ['#e0a23e', '#3d7fff'];
+
+  /** Applique deux couleurs aux tableaux (sélection, sinon tout le spectacle). */
+  applyPalette(colors: [string, string]) {
+    const ids = new Set(this.selectedIds());
+    const all = [...this.project.show.clips, ...(this.project.show.layers ?? []).flatMap((l) => l.clips)];
+    let n = 0;
+    for (const c of all) {
+      if (ids.size && !ids.has(c.id)) continue;
+      if (!this.palAll && !ids.size && !PALETTE_FX.has(c.effect)) continue;
+      const e = EFFECT_MAP.get(c.effect);
+      if (!e) continue;
+      let touched = false;
+      if (e.params.some((p) => p.key === 'colorA')) {
+        c.params.colorA = colors[0];
+        if (c.keys) delete c.keys.colorA;
+        touched = true;
+      }
+      if (e.params.some((p) => p.key === 'colorB')) {
+        c.params.colorB = colors[1];
+        if (c.keys) delete c.keys.colorB;
+        touched = true;
+      }
+      if (touched) n++;
+    }
+    this.refreshShowUI();
+    this.scheduleSave();
+    toast(n ? `Palette appliquée à ${n} tableau(x)${ids.size ? ' sélectionné(s)' : ''}.` : 'Aucun tableau coloré concerné.', n ? 'ok' : 'info');
+  }
+
+  private paletteCard() {
+    const sel = this.selectedIds().length;
+    const a = h('input', { type: 'color', value: this.customPal[0] });
+    const b = h('input', { type: 'color', value: this.customPal[1] });
+    a.addEventListener('input', () => (this.customPal[0] = a.value));
+    b.addEventListener('input', () => (this.customPal[1] = b.value));
+    return h('div', { class: 'card' },
+      h('div', { class: 'card-title' }, 'Palette de couleurs'),
+      h('p', { class: 'muted small' }, sel ? `S’applique aux ${sel} tableau(x) sélectionné(s).` : 'S’applique à tout le spectacle (sélectionnez des tableaux pour limiter).'),
+      h('div', { class: 'palettes' }, ...PALETTES.map((pl) => h('button', { class: 'pal', title: pl.name, onclick: () => this.applyPalette(pl.colors) },
+        h('span', { class: 'pal-sw', style: `background:linear-gradient(135deg, ${pl.colors[0]} 0 50%, ${pl.colors[1]} 50% 100%)` }), h('span', {}, pl.name)))),
+      h('div', { class: 'row pal-custom' }, a, b, h('button', { class: 'btn ghost', onclick: () => this.applyPalette([...this.customPal]) }, 'Appliquer mes couleurs')),
+      sel ? null : h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: this.palAll, onchange: (e: Event) => (this.palAll = (e.target as HTMLInputElement).checked) }), 'Inclure les tableaux aux couleurs naturelles (neige, feu, eau, soleil…)'),
+    );
+  }
+
   private tabAmbiance(b: HTMLElement) {
     const m = this.project.show.master;
     const ch = () => {
       this.dirty = true;
       this.scheduleSave();
     };
+    add(b, this.paletteCard());
     add(b, 
       h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Nom du projet'), h('input', { type: 'text', value: this.project.name, oninput: (e: Event) => {
         this.project.name = (e.target as HTMLInputElement).value;
@@ -1778,9 +1850,22 @@ export class App {
     this.refreshShowUI();
   }
 
+  addMarker() {
+    const ms = (this.project.show.markers ??= []);
+    const t = Math.round(this.time * 100) / 100;
+    if (ms.some((m) => Math.abs(m.t - t) < 0.2)) return;
+    ms.push({ t });
+    ms.sort((a, b) => a.t - b.t);
+    ms.forEach((m, i) => (m.label = m.label && !/^\d+$/.test(m.label) ? m.label : String(i + 1)));
+    this.timeline.render();
+    this.scheduleSave();
+    if (!this.playing) toast(`Repère posé à ${fmtTime(t)}. Pendant la lecture, appuyez sur M au rythme de la musique.`, 'ok', 2500);
+  }
+
   private renderEditTools() {
     const sel = this.selectedIds().length;
     clear(this.timeline.tools).append(
+      h('button', { class: 'btn icon', title: 'Poser un repère (M) — pendant la lecture pour marquer refrains, couplets…', onclick: () => this.addMarker() }, icon('flag')),
       h('button', { class: 'btn icon', title: 'Couper à la tête de lecture (S)', onclick: () => this.splitAtPlayhead() }, icon('scissors')),
       h('button', { class: 'btn icon', title: 'Copier (Ctrl+C)', disabled: !sel, onclick: () => this.copySelection() }, icon('copy')),
       h('button', { class: 'btn icon', title: 'Coller à la tête de lecture (Ctrl+V)', disabled: !this.clipboard.length, onclick: () => this.paste() }, icon('paste')),
@@ -2560,6 +2645,7 @@ export class App {
           e.preventDefault();
           this.selectAllOnTrack();
         } else if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey) this.splitAtPlayhead();
+        else if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey) this.addMarker();
         else if (e.key === 'Escape') {
           this.selectedClip = null;
           this.multi.clear();
