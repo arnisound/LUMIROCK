@@ -59,6 +59,11 @@ export class Previews {
     this.hovered = null;
   }
 
+  forget(effect: string) {
+    this.renderer?.forgetProgram(effect);
+    this.shows.delete(effect);
+  }
+
   hover(effect: string | null) {
     this.hovered = effect;
     this.t0 = performance.now();

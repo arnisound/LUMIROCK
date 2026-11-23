@@ -18,7 +18,7 @@ export interface ParamDef {
   options?: { value: number; label: string }[];
 }
 
-export type Category = 'Lumière' | 'Architecture' | 'Matières' | 'Nature' | 'Graphique' | 'Illusions';
+export type Category = 'Lumière' | 'Architecture' | 'Matières' | 'Nature' | 'Graphique' | 'Illusions' | 'Mes tableaux';
 export type Mood = 'calme' | 'moyen' | 'fort';
 
 export interface EffectDef {
@@ -1430,6 +1430,175 @@ vec3 effect(vec2 uv) {
   return c;
 }`,
   },
+  {
+    id: 'calqueanime', name: 'Calques animés', category: 'Architecture', mood: 'moyen', defaultDuration: 10,
+    description: 'Les éléments s’animent un à un : portes qui s’ouvrent, remplissage, éclosion, rideau, fissure qui progresse, battement.',
+    tags: ['patrimoine', 'halloween', 'noel', 'mariage'],
+    params: [I(), CA('#ffe2a8', 'Lumière'), CB('#ff9a3c', 'Intérieur / fissure'),
+      SEL('mode', 'Animation', 'uParamC', ['Portes qui s’ouvrent', 'Remplissage de bas en haut', 'Éclosion depuis le centre', 'Rideau latéral', 'Fissure qui progresse', 'Battement'], 0),
+      R('cascade', 'Décalage entre éléments', 'uParamA', 0.5), R('bg', 'Lumière sur les murs', 'uParamB', 0.25)],
+    glsl: `
+vec3 effect(vec2 uv) {
+  int mode = int(uParamC + 0.5);
+  vec3 L = normalize(vec3(-0.4, 0.6, 0.8));
+  vec3 wall = vec3(1.0, 0.97, 0.92) * uParamB * (0.5 + 0.5 * diffuseAt(uv, L));
+  if (mode == 4) {
+    // fissure qui part du pied de la façade et grimpe en se ramifiant
+    vec3 v = voronoi(asp(uv) * 7.0);
+    vec3 v2 = voronoi(asp(uv) * 19.0 + 3.0);
+    float d = length(asp(uv) - asp(vec2(0.5, 0.0))) / max(uAspect, 1.0) + fbm(asp(uv) * 3.0) * 0.25;
+    float front = uP * 1.5;
+    float grown = sstep(d, d - 0.04, front);
+    float crack = (sstep(0.03, 0.0, v.y) + sstep(0.02, 0.0, v2.y) * 0.6 * step(0.5, v2.z)) * grown;
+    float tip = sstep(0.05, 0.0, abs(front - d)) * sstep(0.03, 0.0, v.y);
+    return wall * (1.0 - crack * 0.9) + uColB * crack * 2.2 + vec3(1.0, 0.95, 0.8) * tip * 3.0;
+  }
+  int id = zoneId(uv);
+  if (id == 0) return wall;
+  int ty = zoneTypeAt(uv);
+  // les portes ne concernent que les ouvertures ; les autres animations, tous les éléments sauf les grands volumes
+  if (mode == 0 && ty != T_PORTE && ty != T_FENETRE) return wall;
+  if (ty == T_TOUR || ty == T_MUR) return wall;
+  vec4 g = zoneGeom(id);
+  vec4 m = zoneMeta(id);
+  vec2 q = (uv - (g.xy - g.zw * 0.5)) / max(g.zw, vec2(1e-4));
+  float span = 1.0 + uParamA * 0.9;
+  float p = sat((uP * span - m.y * uParamA * 0.9) / 0.6);
+  p = p * p * (3.0 - 2.0 * p);
+  vec3 a = albedo(uv);
+  if (mode == 0) {
+    float gap = p * 0.5;
+    float x = abs(q.x - 0.5);
+    if (x < gap) {
+      float glow = 1.0 - x / max(gap, 1e-3) * 0.5;
+      return uColB * (1.2 + 0.5 * glow) * (0.7 + 0.3 * q.y) + vec3(1.0, 0.9, 0.7) * sstep(0.02, 0.0, gap - x) * 2.0;
+    }
+    // vantail écrasé vers la charnière (perspective)
+    float side = q.x < 0.5 ? 0.0 : 1.0;
+    float lx = side < 0.5 ? q.x / max(0.5 - gap, 1e-3) * 0.5 : 0.5 + (q.x - 0.5 - gap) / max(0.5 - gap, 1e-3) * 0.5;
+    vec2 src = (g.xy - g.zw * 0.5) + vec2(lx, q.y) * g.zw;
+    return albedo(src) * uColA * 1.5 * (1.0 - p * 0.55);
+  }
+  if (mode == 1) {
+    float edge = p + 0.03 * sin(q.x * 20.0 + uT * 4.0) * (1.0 - p);
+    float lit = step(q.y, edge);
+    return wall + uColA * a * 1.8 * lit + uColB * sstep(0.04, 0.0, abs(q.y - edge)) * 2.0 * step(0.01, p) * step(p, 0.99);
+  }
+  if (mode == 2) {
+    vec2 d = (q - 0.5) * vec2(g.z * uAspect / max(g.w, 1e-4), 1.0);
+    float r = length(d) / max(0.5 * max(g.z * uAspect / max(g.w, 1e-4), 1.0), 1e-3);
+    float lit = sstep(p * 1.3, p * 1.3 - 0.06, r);
+    return wall + uColA * a * 1.8 * lit + uColB * sstep(0.06, 0.0, abs(r - p * 1.3)) * 1.8 * step(p, 0.99);
+  }
+  if (mode == 3) {
+    float lit = step(q.x, p);
+    return wall + uColA * a * 1.8 * lit + uColB * sstep(0.03, 0.0, abs(q.x - p)) * 2.0 * step(p, 0.99);
+  }
+  // battement : l'élément « respire » sur le rythme
+  float k = 1.0 + 0.12 * uBeat + 0.05 * sin(uT * 3.0 + m.x * 6.0);
+  vec2 qq = (q - 0.5) * k + 0.5;
+  float inside = step(0.0, qq.x) * step(qq.x, 1.0) * step(0.0, qq.y) * step(qq.y, 1.0);
+  return wall + uColA * a * (1.0 + uBeat) * 1.4 * inside * sstep(0.0, 0.1, uP) + uColB * edgeZone(uv) * uBeat * 2.0;
+}`,
+  },
+  {
+    id: 'personnages', name: 'Personnages', category: 'Illusions', mood: 'calme', defaultDuration: 14,
+    description: 'Des oiseaux s’envolent des corniches, des fantômes traversent les fenêtres, des lucioles dansent, des silhouettes se promènent.',
+    tags: ['halloween', 'saisons', 'noel', 'patrimoine'],
+    params: [I(), S(), CA('#dfeaff', 'Personnages'), CB('#ffb36b', 'Fond lumineux'),
+      SEL('kind', 'Personnages', 'uParamC', ['Envol d’oiseaux', 'Fantômes', 'Lucioles', 'Promeneurs'], 0),
+      R('count', 'Nombre', 'uParamA', 0.5), R('bg', 'Lumière de fond', 'uParamB', 0.55)],
+    glsl: `
+float seg(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; return length(pa - ba * clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0)); }
+float walker(vec2 p, float ph) {
+  float d = length(p - vec2(0.0, 0.62)) - 0.09;
+  d = min(d, seg(p, vec2(0.0, 0.52), vec2(0.0, 0.22)) - 0.06);
+  float sw = sin(ph) * 0.12;
+  d = min(d, seg(p, vec2(0.0, 0.22), vec2(sw, 0.0)) - 0.035);
+  d = min(d, seg(p, vec2(0.0, 0.22), vec2(-sw, 0.0)) - 0.035);
+  d = min(d, seg(p, vec2(0.0, 0.48), vec2(-sw * 0.8, 0.3)) - 0.03);
+  d = min(d, seg(p, vec2(0.0, 0.48), vec2(sw * 0.8, 0.3)) - 0.03);
+  return d;
+}
+vec3 effect(vec2 uv) {
+  float t = uT * uSpeed;
+  int kind = int(uParamC + 0.5);
+  vec2 p = asp(uv);
+  vec3 L = normalize(vec3(-0.4, 0.6, 0.8));
+  vec3 bg = uColB * uParamB * (0.45 + 0.55 * diffuseAt(uv, L));
+  int N = 3 + int(uParamA * 12.0);
+  if (kind == 0) {
+    // oiseaux en ombres chinoises sur un ciel de coucher de soleil
+    float sh = 0.0;
+    for (int i = 0; i < 16; i++) {
+      if (i >= N) break;
+      float fi = float(i);
+      float t0 = hash11(fi * 3.1) * 0.45 * uDur;
+      float lt = max(0.0, t - t0);
+      vec2 start = vec2((0.1 + 0.8 * hash11(fi * 7.7)) * uAspect, 0.35 + 0.45 * hash11(fi * 1.9));
+      float dir = hash11(fi * 5.3) < 0.5 ? -1.0 : 1.0;
+      vec2 pos = start + vec2(dir * lt * 0.12, lt * 0.06 + lt * lt * 0.012);
+      float s = 0.032 + 0.02 * hash11(fi);
+      vec2 q = (p - pos) / s;
+      q.x *= dir;
+      float flap = sin(lt * 14.0 + fi) * 0.6;
+      float d = min(seg(q, vec2(0.0), vec2(-1.0, 0.4 + flap)), seg(q, vec2(0.0), vec2(1.0, 0.4 + flap)));
+      d = min(d, length(q * vec2(1.0, 1.6)) - 0.25);
+      sh = max(sh, sstep(0.14, 0.04, d) * step(0.001, lt + 0.5));
+    }
+    return bg * (1.0 - sh * 0.95);
+  }
+  if (kind == 1) {
+    vec3 c = bg * 0.35;
+    for (int i = 0; i < 12; i++) {
+      if (i >= max(2, N / 2)) break;
+      float fi = float(i);
+      float sp = 0.05 + 0.04 * hash11(fi);
+      float x = mod(hash11(fi * 2.3) * uAspect * 1.6 + t * sp, uAspect * 1.4) - uAspect * 0.2;
+      vec2 pos = vec2(x, 0.25 + 0.55 * hash11(fi * 4.1) + 0.04 * sin(t * 1.3 + fi));
+      vec2 q = (p - pos) / 0.06;
+      float body = length(q * vec2(1.0, 0.75) - vec2(0.0, 0.25)) - 0.55;
+      float skirt = max(abs(q.x) - 0.55 - 0.08 * sin(q.y * 6.0), -q.y - 0.4 - 0.12 * sin(q.x * 9.0 + t * 6.0));
+      skirt = max(skirt, q.y - 0.3);
+      float d = min(body, skirt);
+      float eyes = min(length(q - vec2(-0.2, 0.35)), length(q - vec2(0.2, 0.35))) - 0.09;
+      vec2 zuv = uv;
+      float vis = isOpening(zoneTypeAt(zuv)) ? 1.0 : 0.35;
+      float g = sstep(0.05, -0.05, d) * (1.0 - sstep(0.03, -0.03, eyes)) + exp(-max(d, 0.0) * 4.0) * 0.3;
+      c += uColA * g * vis * (0.8 + 0.2 * sin(t * 3.0 + fi));
+    }
+    return c;
+  }
+  if (kind == 2) {
+    vec3 c = bg * 0.3;
+    for (int i = 0; i < 40; i++) {
+      if (i >= N * 3) break;
+      float fi = float(i);
+      vec2 pos = vec2((0.05 + 0.9 * hash11(fi * 1.7)) * uAspect, 0.05 + 0.9 * hash11(fi * 2.9));
+      pos += vec2(sin(t * 0.4 + fi * 2.0), cos(t * 0.33 + fi)) * 0.05 + vec2(fbm(vec2(t * 0.2, fi)) - 0.5, fbm(vec2(fi, t * 0.2)) - 0.5) * 0.08;
+      float blink = pow(0.5 + 0.5 * sin(t * (1.5 + hash11(fi)) + fi * 4.0), 3.0);
+      float d = length(p - pos);
+      c += uColA * blink * (0.0009 / (d * d + 0.00025)) * 0.4;
+    }
+    return c;
+  }
+  // promeneurs : silhouettes sur le parvis et sur un bandeau
+  float sh = 0.0;
+  for (int i = 0; i < 10; i++) {
+    if (i >= max(2, N / 2)) break;
+    float fi = float(i);
+    float dir = hash11(fi * 3.3) < 0.5 ? -1.0 : 1.0;
+    float sp = 0.06 + 0.04 * hash11(fi * 1.1);
+    float x = mod(hash11(fi * 8.1) * uAspect * 1.5 + t * sp * dir, uAspect * 1.4) - uAspect * 0.2;
+    float y = hash11(fi * 4.4) < 0.6 ? 0.02 : 0.5;
+    float s = y < 0.1 ? 0.24 : 0.15;
+    vec2 q = (p - vec2(x, y)) / s;
+    q.x *= dir;
+    sh = max(sh, sstep(0.03, -0.01, walker(q, t * 5.0 * sp / 0.08 + fi)));
+  }
+  return bg * (1.0 - sh * 0.95) + uColA * 0.05;
+}`,
+  },
   // ───────────────────────────── MÉDIAS ─────────────────────────────
   {
     id: 'media', name: 'Image / vidéo', category: 'Illusions', mood: 'calme', defaultDuration: 10,
@@ -1486,7 +1655,7 @@ vec3 effect(vec2 uv) { return vec3(0.0); }`,
 
 export const EFFECT_MAP = new Map(EFFECTS.map((e) => [e.id, e]));
 
-export const CATEGORIES: Category[] = ['Lumière', 'Architecture', 'Matières', 'Nature', 'Graphique', 'Illusions'];
+export const CATEGORIES: Category[] = ['Mes tableaux', 'Lumière', 'Architecture', 'Matières', 'Nature', 'Graphique', 'Illusions'];
 
 export const CATEGORY_COLORS: Record<Category, string> = {
   Lumière: '#ffcf5c',
@@ -1495,7 +1664,55 @@ export const CATEGORY_COLORS: Record<Category, string> = {
   Nature: '#6ee7a8',
   Graphique: '#ff6fa3',
   Illusions: '#ffa26b',
+  'Mes tableaux': '#5ef0ff',
 };
+
+// ───────────── Tableaux personnalisés (écrits par l'utilisateur) ─────────────
+export interface CustomFx {
+  id: string;
+  name: string;
+  description: string;
+  code: string; // corps GLSL : doit définir vec3 effect(vec2 uv)
+}
+
+export const CUSTOM_TEMPLATE = `// Votre tableau : renvoyez la lumière à projeter en chaque point de la façade.
+// uv : position (0,0 = bas gauche, 1,1 = haut droit) · uT : temps (s) · uP : avancement 0→1
+// Réglages : uParamA, uParamB, uParamC (0→1), uColA, uColB (couleurs), uSpeed, uBeat (rythme)
+vec3 effect(vec2 uv) {
+  float t = uT * uSpeed;
+  // vagues de couleur qui montent, modulées par la pierre
+  float w = 0.5 + 0.5 * sin(uv.y * (6.0 + uParamA * 20.0) - t * 2.0 + fbm(asp(uv) * 3.0) * 3.0);
+  vec3 c = mix(uColA, uColB, w);
+  float pierre = 0.4 + lum(albedo(uv));
+  return c * pierre * (0.6 + uBeat * uParamB) + uColA * edgeZone(uv) * uParamC * 2.0;
+}
+`;
+
+export function customEffectDef(c: CustomFx): EffectDef {
+  return {
+    id: `perso-${c.id}`, name: c.name || 'Tableau perso', category: 'Mes tableaux', mood: 'moyen', defaultDuration: 10,
+    description: c.description || 'Tableau écrit en code (GLSL).', tags: [],
+    params: [I(), S(), CA('#ff4fd8', 'Couleur A'), CB('#2bd9ff', 'Couleur B'), R('a', 'Réglage A', 'uParamA', 0.5), R('b', 'Réglage B', 'uParamB', 0.5), R('c', 'Réglage C', 'uParamC', 0.5)],
+    glsl: c.code,
+  };
+}
+
+/** Ajoute ou met à jour un tableau personnalisé dans la bibliothèque. */
+export function registerCustom(c: CustomFx) {
+  const def = customEffectDef(c);
+  const i = EFFECTS.findIndex((e) => e.id === def.id);
+  if (i >= 0) EFFECTS[i] = def;
+  else EFFECTS.push(def);
+  EFFECT_MAP.set(def.id, def);
+  return def;
+}
+
+export function unregisterCustom(id: string) {
+  const fid = `perso-${id}`;
+  const i = EFFECTS.findIndex((e) => e.id === fid);
+  if (i >= 0) EFFECTS.splice(i, 1);
+  EFFECT_MAP.delete(fid);
+}
 
 export function defaultParams(effectId: string): Record<string, number | string | boolean> {
   const e = EFFECT_MAP.get(effectId);

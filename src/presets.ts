@@ -52,3 +52,21 @@ export function saveBlocks(b: Block[]) {
     /* stockage indisponible */
   }
 }
+
+// Bibliothèque personnelle de tableaux en code (partagée entre les projets de ce navigateur)
+import type { CustomFx } from './effects/library';
+const CKEY = 'lumirock.customfx';
+export function loadCustomFx(): CustomFx[] {
+  try {
+    return JSON.parse(localStorage.getItem(CKEY) ?? '[]');
+  } catch {
+    return [];
+  }
+}
+export function saveCustomFx(list: CustomFx[]) {
+  try {
+    localStorage.setItem(CKEY, JSON.stringify(list));
+  } catch {
+    /* stockage indisponible */
+  }
+}

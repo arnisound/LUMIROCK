@@ -3,11 +3,14 @@ import { buildScene, MAX_WORK } from './analysis/maps';
 import { fitToWork, rectify } from './analysis/rectify';
 import { detectOpenings } from './analysis/detect';
 import { AudioAnalysis, analyseAudio, audioFrameAt, decodeAudio } from './audio';
-import { CATEGORIES, CATEGORY_COLORS, COMMON_PARAMS, EFFECTS, EFFECT_MAP, ParamDef, TRANSITIONS } from './effects/library';
+import { CATEGORIES, CATEGORY_COLORS, COMMON_PARAMS, CustomFx, EFFECTS, EFFECT_MAP, ParamDef, TRANSITIONS, customEffectDef, registerCustom, unregisterCustom } from './effects/library';
+import { openFxEditor } from './ui/fxeditor';
 import { Renderer, SceneMaps, ViewMode, freezeStarts, showDuration, trackTimings } from './gl/renderer';
 import { PALETTES, PALETTE_FX, SCENARIOS, compose, defaultShow, newClip } from './scenarios';
 import { TEMPLATES } from './templates';
 import { CommonsResult, searchCommons } from './commons';
+import { EXAMPLES, Example } from './examples';
+import { AMBIENT, CONTRASTS, CalcInput, MATERIALS, UNITS, computeProjection } from './projcalc';
 import { Clip, Layer, MediaItem, Project, Pt, SoundClip, ZONE_TYPES, ZoneTypeKey, uid, zoneType } from './types';
 import { History } from './history';
 import { effectiveProgress, paramAt, removeKey, setKey } from './keys';
@@ -15,7 +18,7 @@ import { QuadEditor, Tool, ZoneEditor } from './ui/editors';
 import { $, add, clear, fmtTime, h, icon, pickFile, select, slider, toast } from './ui/dom';
 import { Stage } from './ui/stage';
 import { MAIN_TRACK, Timeline } from './ui/timeline';
-import { Block, Preset, loadBlocks, loadPresets, saveBlocks, savePresets } from './presets';
+import { Block, Preset, loadBlocks, loadCustomFx, loadPresets, saveBlocks, saveCustomFx, savePresets } from './presets';
 import { Previews } from './ui/previews';
 import { TOUR_HOME, TOUR_SHOW, markTour, runTour, tourDone } from './ui/tour';
 import { OutputWarp, defaultCalibration, outputSlice } from './output/warp';
@@ -214,6 +217,7 @@ export class App {
     };
     this.buildLayout();
     this.bindKeys();
+    for (const c of loadCustomFx()) registerCustom(c);
     const errors = this.renderer.precompileAll(EFFECTS);
     if (errors.length) console.error(errors);
     requestAnimationFrame((t) => this.loop(t));
@@ -674,6 +678,50 @@ export class App {
     );
   }
 
+  private calc: CalcInput = { width: 20, height: 15, distance: 30, ambient: 5, reflect: 0.45, contrast: 10, lumensPerUnit: 20000 };
+
+  private calcCard() {
+    const c = this.calc;
+    const out = h('div', { class: 'calc-out' });
+    const update = () => {
+      const r = computeProjection(c);
+      add(clear(out),
+        h('div', { class: 'calc-big' }, h('b', {}, `${r.lumens.toLocaleString('fr-FR')} lm`), h('span', {}, `soit ${r.units} × ${(c.lumensPerUnit / 1000).toLocaleString('fr-FR')} 000 lm`)),
+        h('div', { class: 'kv' }, h('span', {}, 'Disposition'), h('b', {}, r.layout)),
+        h('div', { class: 'kv' }, h('span', {}, 'Surface'), h('b', {}, `${Math.round(r.area)} m²`)),
+        h('div', { class: 'kv' }, h('span', {}, 'Éclairement apporté'), h('b', {}, `${r.lux} lux`)),
+        h('div', { class: 'kv' }, h('span', {}, 'Rapport de projection'), h('b', {}, `${r.throwRatio.toLocaleString('fr-FR')}:1`)),
+        h('p', { class: 'muted small', style: 'margin:4px 0' }, `→ ${r.lens}`),
+        h('div', { class: 'kv' }, h('span', {}, 'Netteté sur la façade'), h('b', {}, `≈ ${r.pxPerMeter} px/m (Full HD)`)),
+        r.advice.length ? h('ul', { class: 'tips' }, ...r.advice.map((a) => h('li', {}, a))) : null,
+      );
+    };
+    const num = (label: string, key: 'width' | 'height' | 'distance', step = 0.5) => {
+      const i = h('input', { type: 'number', min: '1', step: String(step), value: String(c[key]) });
+      i.addEventListener('input', () => {
+        c[key] = Math.max(0.5, Number(i.value) || 1);
+        update();
+      });
+      return h('label', { class: 'field' }, h('span', { class: 'lbl' }, label), i);
+    };
+    const sel = (label: string, key: 'ambient' | 'reflect' | 'contrast' | 'lumensPerUnit', options: { value: number; label: string }[]) =>
+      select<number>({ label, value: c[key], options, onChange: (v) => {
+        c[key] = v;
+        update();
+      } });
+    update();
+    return h('details', { class: 'card adv' },
+      h('summary', { class: 'card-title' }, '💡 Calculateur de vidéoprojecteur'),
+      h('p', { class: 'muted small' }, 'Estimation pour préparer un devis : puissance, nombre d’appareils et objectif. À valider par un essai sur site.'),
+      h('div', { class: 'row calc-dims' }, num('Largeur (m)', 'width'), num('Hauteur (m)', 'height'), num('Distance (m)', 'distance', 1)),
+      sel('Lumière ambiante', 'ambient', AMBIENT),
+      sel('Matériau de la façade', 'reflect', MATERIALS),
+      sel('Rendu souhaité', 'contrast', CONTRASTS),
+      sel('Puissance d’un projecteur', 'lumensPerUnit', UNITS.map((u) => ({ value: u, label: `${u.toLocaleString('fr-FR')} lumens` }))),
+      out,
+    );
+  }
+
   private projectorsCard() {
     const conf = this.outputConf();
     const set = (c: Partial<typeof conf>) => {
@@ -779,8 +827,13 @@ export class App {
         h('li', {}, 'Prenez la photo le plus en face possible, de jour, sans voitures ni arbres devant.'),
         h('li', {}, 'Plus la photo est grande, plus les calques seront précis.'),
       ),
+      this.facade ? h('label', { class: 'check', title: 'Les tableaux ciblent des types de calques (fenêtres, portes…) : ils s’adaptent à la nouvelle façade une fois ses calques créés.' },
+        h('input', { type: 'checkbox', checked: this.keepShow, onchange: (e: Event) => (this.keepShow = (e.target as HTMLInputElement).checked) }), 'Garder le spectacle actuel pour la nouvelle photo') : null,
       this.hasAutosave ? h('button', { class: 'btn primary wide', onclick: () => this.restore(this.hasAutosave!) }, 'Reprendre le projet en cours') : null,
       this.commonsCard(),
+      h('h3', {}, 'Spectacles d’exemple, prêts à adapter'),
+      h('div', { class: 'examples' }, ...EXAMPLES.map((ex) => h('button', { class: 'example', onclick: () => this.loadExample(ex) },
+        h('b', {}, ex.name), h('span', {}, ex.description)))),
       h('h3', {}, 'Ou partez d’un monument modèle'),
       h('div', { class: 'templates' },
         ...TEMPLATES.map((t) => {
@@ -797,6 +850,7 @@ export class App {
     );
   }
 
+  keepShow = true;
   private commonsQuery = '';
   private commonsResults: CommonsResult[] = [];
   private commonsNext: number | null = null;
@@ -1127,6 +1181,78 @@ export class App {
     );
   }
 
+  // ───────────────────────── Tableaux en code ─────────────────────────
+  private fxPreview: string | null = null;
+  private fxPreviewClip: Clip | null = null;
+
+  editCustomFx(c: CustomFx | null) {
+    document.querySelector('.fx-editor')?.remove();
+    this.pause();
+    const id = openFxEditor(c, {
+      tryCompile: (fx) => this.renderer.tryCompile(customEffectDef(fx)),
+      apply: (fx) => {
+        const def = registerCustom(fx);
+        this.renderer.forgetProgram(def.id);
+        this.previews.forget(def.id);
+        const lib = loadCustomFx().filter((x) => x.id !== fx.id);
+        saveCustomFx([...lib, fx]);
+        this.fxPreview = def.id;
+        this.dirty = true;
+      },
+      close: () => {
+        this.fxPreview = null;
+        this.dirty = true;
+        this.refreshShowUI();
+        this.scheduleSave();
+      },
+    });
+    this.fxPreview = id;
+  }
+
+  private customFxCard() {
+    const list = loadCustomFx();
+    return h('div', { class: 'card' },
+      h('div', { class: 'card-title' }, '</> Mes tableaux en code'),
+      list.length ? h('div', { class: 'media-list' }, ...list.map((c) => h('div', { class: 'media-item' },
+        h('span', { class: 'dot', style: 'background:#5ef0ff' }),
+        h('span', { class: 'zn', title: c.description }, c.name),
+        h('button', { class: 'btn small', title: 'Modifier le code', onclick: () => this.editCustomFx(c) }, '✎'),
+        h('button', { class: 'btn small', title: 'Ajouter au spectacle', onclick: () => this.addClip(`perso-${c.id}`) }, icon('plus')),
+        h('button', { class: 'btn small danger', title: 'Supprimer de ma bibliothèque', onclick: () => {
+          if (!confirm(`Supprimer « ${c.name} » de votre bibliothèque ?`)) return;
+          saveCustomFx(loadCustomFx().filter((x) => x.id !== c.id));
+          const used = [...this.project.show.clips, ...(this.project.show.layers ?? []).flatMap((l) => l.clips)].some((k) => k.effect === `perso-${c.id}`);
+          if (!used) unregisterCustom(c.id);
+          this.renderSide();
+        } }, '×')))) : h('p', { class: 'muted small' }, 'Pour les créateurs qui codent : écrivez votre propre effet en GLSL, avec un aperçu en direct sur la façade. Il rejoint ensuite la bibliothèque comme les autres tableaux.'),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn ghost', onclick: () => this.editCustomFx(null) }, icon('plus'), 'Nouveau'),
+        h('button', { class: 'btn ghost', disabled: !list.length, onclick: () => download(new Blob([JSON.stringify(loadCustomFx(), null, 2)], { type: 'application/json' }), 'lumirock_tableaux_code.json') }, icon('download')),
+        h('button', { class: 'btn ghost', title: 'Importer des tableaux en code', onclick: async () => {
+          const f = await pickFile('.json,application/json');
+          if (!f) return;
+          try {
+            const add = JSON.parse(await f.text()) as CustomFx[];
+            const lib = loadCustomFx();
+            let n = 0;
+            for (const c of add) {
+              if (!c?.id || typeof c.code !== 'string') continue;
+              if (this.renderer.tryCompile(customEffectDef(c))) continue;
+              registerCustom(c);
+              if (!lib.some((x) => x.id === c.id)) lib.push(c);
+              n++;
+            }
+            saveCustomFx(lib);
+            this.renderSide();
+            toast(`${n} tableau(x) en code importé(s).`, 'ok');
+          } catch {
+            toast('Fichier illisible.', 'err');
+          }
+        } }, icon('upload')),
+      ),
+    );
+  }
+
   private mediaLibrary() {
     const items = (this.project.media ?? []).filter((m) => m.kind !== 'audio');
     return h('div', { class: 'card' },
@@ -1200,7 +1326,9 @@ export class App {
       ),
     ));
     add(b, this.mediaLibrary());
+    add(b, this.customFxCard());
     for (const cat of CATEGORIES) {
+      if (!EFFECTS.some((e) => e.category === cat)) continue;
       add(b, h('h3', { class: 'cat', style: `--c:${CATEGORY_COLORS[cat]}` }, cat));
       add(b, h('div', { class: 'fx-grid' },
         ...EFFECTS.filter((e) => e.category === cat).map((e) => {
@@ -1589,6 +1717,11 @@ export class App {
         ),
       ),
       h('div', { class: 'card' },
+        h('div', { class: 'card-title' }, 'Storyboard pour le client'),
+        h('p', { class: 'muted small' }, 'Une page imprimable avec une vignette par tableau, le minutage, les transitions et les couleurs : à envoyer en PDF avec votre devis.'),
+        h('button', { class: 'btn ghost wide', onclick: () => this.storyboard() }, icon('download'), 'Créer le storyboard (PDF)'),
+      ),
+      h('div', { class: 'card' },
         h('div', { class: 'card-title' }, 'Présenter au client'),
         h('p', { class: 'muted small' }, 'Lance le spectacle en simulation de nuit, en plein écran, avec le titre du projet : idéal en rendez-vous.'),
         h('button', { class: 'btn primary wide', onclick: () => this.present() }, icon('play'), 'Mode présentation'),
@@ -1610,6 +1743,7 @@ export class App {
         })(),
       ),
       this.projectorsCard(),
+      this.calcCard(),
       this.scheduleCard(),
     );
   }
@@ -1794,9 +1928,11 @@ export class App {
       this.sourceCanvas = imageDataToCanvas(this.sourceImage);
       this.quad = [[0.08, 0.08], [0.92, 0.08], [0.92, 0.92], [0.08, 0.92]];
       const media = this.project.media;
+      const kept = this.keepShow && this.facade ? structuredClone(this.project.show) : null;
       this.project = emptyProject();
       this.project.name = file.name.replace(/\.[^.]+$/, '');
       this.project.media = media;
+      if (kept) this.project.show = kept;
       this.history.reset(this.project);
       this.facade = null;
       this.aiDepth = null;
@@ -1810,7 +1946,21 @@ export class App {
     }
   }
 
-  loadTemplate(id: string) {
+  loadExample(ex: Example) {
+    this.loadTemplate(ex.template, true);
+    const show = this.project.show;
+    show.clips = compose(ex.scenario, ex.duration, null, show.bpm);
+    show.layers = [];
+    ex.extras?.(show);
+    this.project.name = ex.title;
+    this.history.reset(this.project);
+    this.selectedClip = null;
+    this.goto('spectacle');
+    this.scheduleSave();
+    toast(`Spectacle « ${ex.name} » chargé. Espace pour le lancer — puis importez votre photo en gardant le spectacle.`, 'ok', 6000);
+  }
+
+  loadTemplate(id: string, silent = false) {
     const t = TEMPLATES.find((x) => x.id === id)!.build();
     const media = this.project.media;
     this.project = emptyProject();
@@ -1827,6 +1977,7 @@ export class App {
     this.history.reset(this.project);
     this.selectedClip = null;
     this.time = 0;
+    if (silent) return;
     this.goto('spectacle');
     toast(`${t.name} chargé avec ${t.zones.length} calques. Appuyez sur Espace pour lancer le spectacle !`, 'ok', 5000);
   }
@@ -2604,6 +2755,12 @@ export class App {
       if (this.step === 'calques') {
         if (this.mapView === 'photo') this.renderer.showMap('albedo');
         else this.renderer.showMap(this.mapView);
+      } else if (this.fxPreview && EFFECT_MAP.has(this.fxPreview)) {
+        if (this.fxPreviewClip?.effect !== this.fxPreview) this.fxPreviewClip = { ...newClip(this.fxPreview, 10), id: 'apercu' };
+        const c = this.fxPreviewClip;
+        const pt = (performance.now() / 1000) % 10;
+        this.renderer.render({ ...this.project.show, clips: [c], layers: [] }, pt, audioFrameAt(pt, null, this.project.show.bpm), this.view === 'jour' ? 'simulation' : this.view, { fade: false });
+        this.dirty = true;
       } else if (this.step === 'spectacle' || this.step === 'export' || this.step === 'source') {
         const mode = this.step === 'source' ? 'jour' : this.view;
         this.renderer.render(this.project.show, this.time, audioFrameAt(this.time, this.audio?.analysis ?? null, this.project.show.bpm), mode);
@@ -2826,6 +2983,34 @@ export class App {
     }
   }
 
+  async storyboard() {
+    if (!this.scene || !this.facade) return;
+    try {
+      this.busy('Préparation du storyboard…');
+      const small = new OffscreenCanvas(440, Math.round((440 * this.facade.height) / this.facade.width));
+      const big = new OffscreenCanvas(this.facade.width, this.facade.height);
+      big.getContext('2d')!.putImageData(this.facade, 0, 0);
+      small.getContext('2d')!.drawImage(big, 0, 0, small.width, small.height);
+      const fb = await small.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
+      const facadeUrl = await new Promise<string>((res) => {
+        const rd = new FileReader();
+        rd.onload = () => res(String(rd.result));
+        rd.readAsDataURL(fb);
+      });
+      const { openStoryboard } = await import('./export/storyboard');
+      await openStoryboard({
+        scene: this.scene, project: this.project, analysis: this.audio?.analysis ?? null, musicName: this.audio?.name ?? null,
+        mediaProvider: (id, clip, local) => this.mediaSource(id, clip, local),
+        logoUrl: new URL(`${import.meta.env.BASE_URL}logo-512.png`, location.href).href, facadeUrl,
+      });
+    } catch (e) {
+      console.error(e);
+      toast(`Storyboard impossible : ${(e as Error).message}`, 'err');
+    } finally {
+      this.busy(null);
+    }
+  }
+
   /** Mode présentation : plein écran, simulation de nuit, titre. */
   present() {
     if (!this.scene) return;
@@ -2882,7 +3067,14 @@ export class App {
     return main;
   }
 
+  private collectCustomFx() {
+    const used = new Set([...this.project.show.clips, ...(this.project.show.layers ?? []).flatMap((l) => l.clips)].map((c) => c.effect).filter((e) => e.startsWith('perso-')));
+    const lib = loadCustomFx();
+    this.project.customFx = lib.filter((c) => used.has(`perso-${c.id}`));
+  }
+
   private async facadeState(): Promise<SavedState> {
+    this.collectCustomFx();
     if (this.facade && !this.facadeBlob) this.facadeBlob = await imageDataToBlob(this.facade);
     if (!this.sourceBlob && this.sourceImage) this.sourceBlob = await imageDataToBlob(this.sourceImage);
     return {
@@ -2971,6 +3163,15 @@ export class App {
         // la programmation doit être réactivée à la main (lecture du son et anti-veille)
         this.project.schedule.on = false;
         setTimeout(() => toast('Ce projet avait une programmation horaire : réactivez-la dans Export.', 'info', 6000), 500);
+      }
+      if (this.project.customFx?.length) {
+        const lib = loadCustomFx();
+        for (const c of this.project.customFx) {
+          registerCustom(c);
+          this.renderer.forgetProgram(`perso-${c.id}`);
+          if (!lib.some((x) => x.id === c.id)) lib.push(c);
+        }
+        saveCustomFx(lib);
       }
       freezeStarts(this.project.show.clips);
       for (const l of this.project.show.layers ?? []) freezeStarts(l.clips);

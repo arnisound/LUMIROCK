@@ -372,3 +372,33 @@ header.top .steps { flex-shrink: 1; min-width: 0; }
 .commons-item:hover { border-color: var(--accent); }
 .row input[type='search'] { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line2); border-radius: 8px; padding: 8px 10px; }
 .credit a { color: var(--accent); }
+
+.examples { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.example { text-align: left; border: 1px solid var(--line); background: linear-gradient(160deg, rgba(224,162,62,0.08), transparent 60%), var(--bg2); border-radius: 10px; padding: 9px; cursor: pointer; display: flex; flex-direction: column; gap: 3px; }
+.example:hover { border-color: var(--accent); }
+.example b { font-size: 13px; }
+.example span { font-size: 11px; color: var(--muted); }
+
+.calc-dims .field { flex: 1; min-width: 0; margin: 4px 0; }
+.calc-dims input { background: var(--bg); border: 1px solid var(--line2); border-radius: 8px; padding: 7px 8px; width: 100%; }
+.calc-out { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.calc-big { display: flex; flex-direction: column; align-items: center; margin-bottom: 8px; }
+.calc-big b { font-size: 26px; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.calc-big span { color: var(--muted); font-size: 12px; }
+
+/* ─── éditeur de tableaux ─── */
+.fx-editor { position: fixed; left: 0; top: 58px; bottom: 0; width: min(560px, 100vw); z-index: 40; background: #10131a; border-right: 1px solid var(--line2); box-shadow: 20px 0 50px rgba(0,0,0,0.5); padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+.fx-head { display: flex; justify-content: space-between; align-items: center; }
+.fx-editor input[type='text'] { flex: 1; background: var(--bg); border: 1px solid var(--line2); border-radius: 8px; padding: 8px 10px; }
+.fx-code { flex: 1; min-height: 200px; resize: none; font: 12.5px/1.5 'JetBrains Mono', 'Fira Code', Consolas, monospace; background: #07080c; color: #d7e3ff; border: 1px solid var(--line2); border-radius: 10px; padding: 12px; tab-size: 2; white-space: pre; overflow: auto; }
+.fx-status { font: 12px/1.4 monospace; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; }
+.fx-status.ok { background: rgba(74, 222, 128, 0.1); color: #7ee2a2; }
+.fx-status.err { background: rgba(255, 84, 112, 0.12); color: #ff8ea1; }
+.fx-help { font-size: 12px; color: var(--muted); max-height: 30vh; overflow: auto; }
+.fx-help code { color: #9fd0ff; }
+.fx-help summary { cursor: pointer; color: var(--text); }
+
+@media (max-width: 1500px) {
+  .step:not(.active) { font-size: 0; gap: 0; padding: 6px; }
+  .step:not(.active) .num { font-size: 12px; }
+}

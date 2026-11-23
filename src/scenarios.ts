@@ -20,6 +20,21 @@ export interface Scenario {
 
 export const SCENARIOS: Scenario[] = [
   {
+    id: 'musique', name: 'Fête de la musique', description: 'Lasers, égaliseur, néons et pixels qui battent au rythme.', palette: ['#2bd9ff', '#ff2bd6'],
+    steps: [
+      { effect: 'scan', weight: 0.7 },
+      { effect: 'egaliseur', weight: 1.1, params: { mode: 0 } },
+      { effect: 'lasers', weight: 1.0, transition: 'flash' },
+      { effect: 'battement', weight: 0.8 },
+      { effect: 'neon', weight: 0.9, params: { rainbow: true } },
+      { effect: 'onde', weight: 0.9 },
+      { effect: 'egaliseur', weight: 1.0, params: { mode: 1 }, transition: 'pixels' },
+      { effect: 'matrix', weight: 0.8 },
+      { effect: 'objets3d', weight: 1.0, params: { shape: 3 }, transition: 'iris' },
+      { effect: 'feuxartifice', weight: 1.0, transition: 'flash' },
+    ],
+  },
+  {
     id: 'noel', name: 'Noël', description: 'Neige, bougies, or et vitraux, final en feu d’artifice.', palette: ['#ffcf6b', '#ff2f4f'],
     steps: [
       { effect: 'rideau', weight: 0.8, params: { colorA: '#9e0f1f' } },

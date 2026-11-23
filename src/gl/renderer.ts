@@ -265,6 +265,24 @@ export class Renderer {
   }
 
   /** Compile (ou récupère) le programme d'un effet. */
+  /** Oublie le programme compilé d'un effet (après modification de son code). */
+  forgetProgram(id: string) {
+    const p = this.programs.get(id);
+    if (p) this.gl.deleteProgram(p.prog);
+    this.programs.delete(id);
+  }
+
+  /** Compile un effet à part pour vérifier son code ; renvoie null si tout va bien, sinon le message. */
+  tryCompile(effect: EffectDef): string | null {
+    try {
+      const p = new Program(this.gl, FULLSCREEN_VS, EFFECT_HEADER + effect.glsl + EFFECT_FOOTER, effect.name);
+      this.gl.deleteProgram(p.prog);
+      return null;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  }
+
   program(effect: EffectDef) {
     let p = this.programs.get(effect.id);
     if (!p) {
