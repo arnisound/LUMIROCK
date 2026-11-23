@@ -43,7 +43,7 @@ npm run dev
 npm run build
 ```
 
-Le site statique est généré dans `dist/`. Le workflow `.github/workflows/deploy.yml` le publie gratuitement sur GitHub Pages à chaque push sur `main` (à activer une fois : *Settings → Pages → Source : GitHub Actions*).
+Le site statique est généré dans `dist/`. Le workflow `.github/workflows/deploy.yml` le construit à chaque push sur `main` et le publie sur la branche `gh-pages`. Réglage GitHub Pages : *Settings → Pages → Deploy from a branch → `gh-pages` / `(root)`* (le mode *GitHub Actions* fonctionne aussi).
 
 ### Architecture
 
