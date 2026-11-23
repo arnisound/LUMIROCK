@@ -17,6 +17,7 @@ import { MAIN_TRACK, Timeline } from './ui/timeline';
 import { Preset, loadPresets, savePresets } from './presets';
 import { Previews } from './ui/previews';
 import { TOUR_HOME, TOUR_SHOW, markTour, runTour, tourDone } from './ui/tour';
+import { OutputWarp, defaultCalibration } from './output/warp';
 import { buildKit, canvasToPng, drawTemplate, zipFiles } from './export/kit';
 import { exportClips, exportVideo, videoCodecFor } from './export/video';
 import { SavedState, autosave, download, loadAutosave, loadLumirock, saveLumirock } from './export/projectio';
@@ -389,6 +390,7 @@ export class App {
           this.renderSide();
         } }, icon('music'), this.audioNode ? 'Arrêter la musique' : 'Lancer la musique') : null,
         h('button', { class: 'btn ghost wide', onclick: () => this.openOutput() }, icon('screen'), 'Sortie projecteur (2e fenêtre)'),
+        h('button', { class: 'btn ghost wide', onclick: () => this.calibrateOutput() }, 'Caler le projecteur sur le monument'),
       ),
     );
     this.renderLivePads();
@@ -427,6 +429,23 @@ export class App {
 
   // ───────────────────────── Sortie projecteur ─────────────────────────
   private outputWin: Window | null = null;
+  private warp: OutputWarp | null = null;
+
+  /** Ouvre la sortie projecteur en mode calage. */
+  calibrateOutput() {
+    if (!this.outputWin || this.outputWin.closed) this.openOutput();
+    if (!this.warp || !this.outputWin || this.outputWin.closed) return;
+    this.warp.setCalibrating(true);
+    this.outputWin.focus();
+    toast('Calage : glissez les points dans la fenêtre projecteur (aide affichée dans la fenêtre).', 'info', 6000);
+  }
+
+  resetCalibration() {
+    this.project.calibration = defaultCalibration();
+    if (this.warp) this.warp.reset();
+    this.scheduleSave();
+    toast('Calage réinitialisé.', 'ok');
+  }
 
   openOutput() {
     if (this.outputWin && !this.outputWin.closed) {
@@ -439,16 +458,30 @@ export class App {
       return;
     }
     w.document.title = 'Lumirock — Sortie projecteur';
+    w.document.body.replaceChildren();
     w.document.body.style.cssText = 'margin:0;background:#000;overflow:hidden;cursor:none';
     const v = w.document.createElement('video');
     v.autoplay = true;
     v.muted = true;
     v.playsInline = true;
-    v.style.cssText = 'width:100vw;height:100vh;object-fit:contain;background:#000;display:block';
+    v.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
     v.srcObject = this.stage.gl.captureStream(60);
     w.document.body.appendChild(v);
+    v.play().catch(() => undefined);
+    this.warp = new OutputWarp(w, v, this.project.calibration ?? defaultCalibration(), (c) => {
+      this.project.calibration = c;
+      this.scheduleSave(false);
+    }, () => {
+      if (!this.scene) return null;
+      const m = drawTemplate(this.scene, this.project, true, Math.max(1, 1600 / this.scene.width));
+      const cv = w.document.createElement('canvas');
+      cv.width = m.width;
+      cv.height = m.height;
+      cv.getContext('2d')!.drawImage(m, 0, 0);
+      return cv;
+    });
     const hint = w.document.createElement('div');
-    hint.textContent = 'Glissez cette fenêtre sur le vidéoprojecteur puis double-cliquez pour le plein écran';
+    hint.textContent = 'Glissez cette fenêtre sur le vidéoprojecteur, double-cliquez pour le plein écran, touche C pour caler l’image sur le monument';
     hint.style.cssText = 'position:fixed;left:50%;top:20px;transform:translateX(-50%);color:#e0a23e;font:14px sans-serif;background:rgba(0,0,0,.7);padding:8px 14px;border-radius:8px;transition:opacity 1s';
     w.document.body.appendChild(hint);
     setTimeout(() => (hint.style.opacity = '0'), 6000);
@@ -1207,8 +1240,12 @@ export class App {
       ),
       h('div', { class: 'card' },
         h('div', { class: 'card-title' }, 'Projeter directement'),
-        h('p', { class: 'muted small' }, 'Ouvrez la sortie projecteur, glissez-la sur l’écran du vidéoprojecteur puis double-cliquez pour le plein écran.'),
+        h('p', { class: 'muted small' }, 'Ouvrez la sortie projecteur, glissez-la sur l’écran du vidéoprojecteur puis double-cliquez pour le plein écran. Calez ensuite l’image sur le monument : 4 coins pour la perspective, puis une grille 3×3 ou 5×5 pour les façades irrégulières. Le calage est enregistré avec le projet.'),
         h('button', { class: 'btn ghost wide', onclick: () => this.openOutput() }, icon('screen'), 'Sortie projecteur'),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn primary', onclick: () => this.calibrateOutput() }, 'Caler sur le monument'),
+          h('button', { class: 'btn ghost', disabled: !this.project.calibration, onclick: () => this.resetCalibration() }, 'Réinitialiser'),
+        ),
       ),
     );
   }

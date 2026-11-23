@@ -85,6 +85,7 @@ export interface Project {
   show: Show;
   depthSource: 'auto' | 'ia';
   media?: MediaItem[];
+  calibration?: { corners: Pt[]; n: number; offsets: Pt[] }; // calage du projecteur
 }
 
 export function uid(prefix = 'z') {

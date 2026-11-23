@@ -26,6 +26,9 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 - **Vos images et vidéos** : sur la façade ou cadrées dans chaque calque ; position, échelle et rotation réglables ou à la souris directement sur l'image.
 - **Détourage IA en un clic** (SlimSAM) et analyse de la façade en arrière-plan.
 - **Mode live** : pads au clavier, tap tempo, noir, intensité ; **sortie projecteur** dans une 2e fenêtre.
+- **Calage du projecteur intégré** : 4 coins (perspective) puis grille 3×3 ou 5×5, mire de contours projetée, enregistré avec le projet — plus besoin de logiciel de mapping à côté.
+- **Réaction par bandes** : chaque tableau peut réagir aux basses, médiums ou aigus ; tableau « Égaliseur ».
+- **Montage** : sélection multiple, couper à la tête (S), copier / coller / dupliquer, déplacement groupé.
 - **Aperçus animés** des tableaux, **préréglages** personnels, export **qualité finale**.
 - **Présentation client** : mode plein écran, vidéo habillée (titre + signature) et **lien de démonstration** (`#demo=` + lien d'un fichier .lumirock public).
 - **Plusieurs façades** par projet, **visite guidée**, interface **mobile**.
