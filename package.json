@@ -1,0 +1,22 @@
+{
+  "name": "lumirock",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lumirock — créez des spectacles de video mapping pour monuments, directement dans le navigateur.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.2",
+    "fflate": "^0.8.3",
+    "mediabunny": "^1.66.2"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  }
+}
