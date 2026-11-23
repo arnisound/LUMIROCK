@@ -26,6 +26,7 @@ export interface VideoExportOptions {
   prepareFrame?: (t: number, show: Show) => Promise<void>;
   finalQuality?: boolean;
   decorate?: (ctx: CanvasRenderingContext2D, w: number, h: number, t: number) => void;
+  audioMix?: (t0: number, t1: number) => Promise<AudioBuffer | null>; // musique + voix off + bruitages
 }
 
 export async function videoCodecFor(width: number, height: number) {
@@ -69,7 +70,7 @@ export async function exportVideo(o: VideoExportOptions): Promise<{ blob: Blob; 
   const video = new CanvasSource(canvas, { codec, quality: o.quality === 'tres-haute' ? QUALITY_VERY_HIGH : QUALITY_HIGH, keyFrameInterval: 1 });
   output.addVideoTrack(video, { frameRate: o.fps });
   let audioSrc: AudioBufferSource | null = null;
-  if (o.withAudio && o.analysis) {
+  if (o.withAudio && (o.analysis || o.audioMix)) {
     const ac = await getFirstEncodableAudioCodec(['aac', 'opus']);
     if (ac) {
       audioSrc = new AudioBufferSource({ codec: ac, quality: QUALITY_HIGH });
@@ -96,7 +97,10 @@ export async function exportVideo(o: VideoExportOptions): Promise<{ blob: Blob; 
       await new Promise((r) => setTimeout(r, 0));
     }
   }
-  if (audioSrc && o.analysis) await audioSrc.add(sliceAudio(o.analysis.buffer, o.t0, o.t1));
+  if (audioSrc) {
+    const mixed = o.audioMix ? await o.audioMix(o.t0, o.t1) : o.analysis ? sliceAudio(o.analysis.buffer, o.t0, o.t1) : null;
+    if (mixed) await audioSrc.add(mixed);
+  }
   o.onProgress?.(1, 'Finalisation du fichier…');
   await output.finalize();
   const buf = (output.target as BufferTarget).buffer!;

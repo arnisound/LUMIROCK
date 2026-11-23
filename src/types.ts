@@ -63,16 +63,30 @@ export interface Layer {
   muted?: boolean;
 }
 
+/** Son placé sur la piste audio (voix off, bruitage). */
+export interface SoundClip {
+  id: string;
+  media: string; // id du fichier audio dans la médiathèque
+  start: number; // position dans le spectacle (s)
+  offset: number; // début dans le fichier (s)
+  duration: number; // durée jouée (s)
+  srcDuration: number; // durée totale du fichier (s)
+  volume: number; // 0..2
+  fadeIn: number;
+  fadeOut: number;
+}
+
 export interface MediaItem {
   id: string;
   name: string;
-  kind: 'image' | 'video';
+  kind: 'image' | 'video' | 'audio';
 }
 
 export interface Show {
   clips: Clip[]; // piste principale
   layers?: Layer[];
   markers?: { t: number; label?: string }[]; // repères posés sur la musique
+  sounds?: SoundClip[]; // voix off et bruitages
   bpm: number;
   master: { brightness: number; bloom: number; relief: number; vignette: number; ambient?: number };
 }

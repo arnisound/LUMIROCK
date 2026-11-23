@@ -18,6 +18,8 @@ export interface TimelineEvents {
   home: () => void;
   addTrack: () => void;
   removeMarker: (index: number) => void;
+  soundSelect: (id: string) => void;
+  soundEdit: (id: string, start: number, offset: number, duration: number, final: boolean) => void;
 }
 
 interface TrackView {
@@ -47,6 +49,7 @@ export class Timeline {
   private show: Show | null = null;
   private analysis: AudioAnalysis | null = null;
   private selected: string | null = null;
+  selectedSound: string | null = null;
   /** sélection multiple (en plus de la sélection principale) */
   multi = new Set<string>();
   private time = 0;
@@ -159,7 +162,8 @@ export class Timeline {
     const W = Math.max(this.scroll.clientWidth, Math.ceil(len * this.pps) + 16);
     this.content.style.width = `${W}px`;
     const views = this.trackViews();
-    this.root.style.height = `${126 + views.length * 78 + (this.analysis ? 0 : -34)}px`;
+    const hasSounds = !!this.show.sounds?.length;
+    this.root.style.height = `${126 + (views.length + (hasSounds ? 1 : 0)) * 78 + (this.analysis ? 0 : -34)}px`;
     // règle
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     this.ruler.width = W * dpr;
@@ -231,6 +235,11 @@ export class Timeline {
       this.fillTrack(row, view);
       this.tracks.appendChild(row);
     }
+    if (hasSounds) {
+      const row = h('div', { class: 'tl-track audio', 'data-track': 'audio' }, h('span', { class: 'tl-track-name' }, 'Voix off & bruitages'));
+      this.fillSounds(row);
+      this.tracks.appendChild(row);
+    }
     this.setTime(this.time);
   }
 
@@ -254,6 +263,52 @@ export class Timeline {
     return Math.abs(g - t) < thr ? Math.max(0, g) : t;
   }
 
+  private fillSounds(row: HTMLElement) {
+    for (const sc of this.show!.sounds ?? []) {
+      const right = h('div', { class: 'tl-resize', title: 'Durée' });
+      const left = h('div', { class: 'tl-resize l', title: 'Début du son' });
+      const el = h('div', {
+        class: `tl-clip sound${sc.id === this.selectedSound ? ' sel' : ''}${sc.duration * this.pps < 40 ? ' narrow' : ''}`,
+        style: `left:${8 + sc.start * this.pps}px;width:${Math.max(6, sc.duration * this.pps - 1)}px;--c:#3fd0b4`,
+        title: `Son — ${sc.start.toFixed(1)} s → ${(sc.start + sc.duration).toFixed(1)} s`,
+      }, h('div', { class: 'tl-clip-name' }, '♪ ', this.soundName?.(sc.media) ?? 'Son'), h('div', { class: 'tl-clip-dur' }, `${sc.duration.toFixed(1)} s · ${Math.round(sc.volume * 100)} %`), left, right);
+      const drag = (handle: HTMLElement, mode: 'move' | 'l' | 'r') => handle.addEventListener('pointerdown', (ev) => {
+        ev.stopPropagation();
+        handle.setPointerCapture(ev.pointerId);
+        const x0 = ev.clientX;
+        const s0 = { ...sc };
+        let moved = false;
+        const calc = (m: PointerEvent): [number, number, number] => {
+          const dt = (m.clientX - x0) / this.pps;
+          if (mode === 'move') return [Math.max(0, this.snapTime(Math.max(0, s0.start + dt), sc.id)), s0.offset, s0.duration];
+          if (mode === 'r') return [s0.start, s0.offset, Math.max(0.2, Math.min(s0.srcDuration - s0.offset, s0.duration + dt))];
+          const d = Math.max(-s0.offset, Math.min(s0.duration - 0.2, dt));
+          return [s0.start + d, s0.offset + d, s0.duration - d];
+        };
+        const mv = (m: PointerEvent) => {
+          if (Math.abs(m.clientX - x0) > 3) moved = true;
+          if (!moved) return;
+          const [st, , du] = calc(m);
+          el.style.left = `${8 + st * this.pps}px`;
+          el.style.width = `${Math.max(6, du * this.pps - 1)}px`;
+          this.ev.soundEdit(sc.id, ...calc(m), false);
+        };
+        handle.addEventListener('pointermove', mv);
+        handle.addEventListener('pointerup', (m) => {
+          handle.removeEventListener('pointermove', mv);
+          if (moved) this.ev.soundEdit(sc.id, ...calc(m), true);
+          this.ev.soundSelect(sc.id);
+        }, { once: true });
+      });
+      drag(el, 'move');
+      drag(left, 'l');
+      drag(right, 'r');
+      row.appendChild(el);
+    }
+  }
+
+  soundName: ((mediaId: string) => string) | null = null;
+
   private fillTrack(row: HTMLElement, view: TrackView) {
     const timings = trackTimings(view.clips);
     // zones de transition (chevauchements)
@@ -272,7 +327,7 @@ export class Timeline {
       const el = h(
         'div',
         {
-          class: `tl-clip${tm.clip.id === this.selected ? ' sel' : this.multi.has(tm.clip.id) ? ' sel2' : ''}${tm.clip.effect === 'vide' ? ' empty' : ''}`,
+          class: `tl-clip${tm.clip.duration * this.pps < 40 ? ' narrow' : ''}${tm.clip.id === this.selected ? ' sel' : this.multi.has(tm.clip.id) ? ' sel2' : ''}${tm.clip.effect === 'vide' ? ' empty' : ''}`,
           style: `left:${8 + tm.start * this.pps}px;width:${Math.max(6, tm.clip.duration * this.pps - 1)}px;--c:${color}`,
           title: `${e?.name ?? tm.clip.effect} — ${tm.start.toFixed(1)} s → ${tm.end.toFixed(1)} s`,
         },

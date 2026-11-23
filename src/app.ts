@@ -7,7 +7,7 @@ import { CATEGORIES, CATEGORY_COLORS, COMMON_PARAMS, EFFECTS, EFFECT_MAP, ParamD
 import { Renderer, SceneMaps, ViewMode, freezeStarts, showDuration, trackTimings } from './gl/renderer';
 import { PALETTES, PALETTE_FX, SCENARIOS, compose, defaultShow, newClip } from './scenarios';
 import { TEMPLATES } from './templates';
-import { Clip, Layer, MediaItem, Project, Pt, ZONE_TYPES, ZoneTypeKey, uid, zoneType } from './types';
+import { Clip, Layer, MediaItem, Project, Pt, SoundClip, ZONE_TYPES, ZoneTypeKey, uid, zoneType } from './types';
 import { History } from './history';
 import { effectiveProgress, paramAt, removeKey, setKey } from './keys';
 import { QuadEditor, Tool, ZoneEditor } from './ui/editors';
@@ -137,6 +137,8 @@ export class App {
           this.multi.clear();
           if (id) this.showTab = 'reglages';
         }
+        this.selectedSound = null;
+        this.timeline.selectedSound = null;
         this.refreshShowUI();
       },
       moveMany: (ids, delta) => {
@@ -178,6 +180,24 @@ export class App {
       togglePlay: () => this.togglePlay(),
       home: () => this.seek(0),
       addTrack: () => this.addLayer(),
+      soundSelect: (id) => {
+        this.selectedSound = id;
+        this.timeline.selectedSound = id;
+        this.selectedClip = null;
+        this.multi.clear();
+        this.showTab = 'reglages';
+        this.refreshShowUI();
+      },
+      soundEdit: (id, start, offset, duration, final) => {
+        const sc = this.project.show.sounds?.find((x) => x.id === id);
+        if (!sc) return;
+        Object.assign(sc, { start: Math.round(start * 100) / 100, offset: Math.round(offset * 100) / 100, duration: Math.round(duration * 100) / 100 });
+        if (final) {
+          this.refreshShowUI();
+          this.scheduleSave();
+          if (this.playing) this.seek(this.time);
+        }
+      },
       removeMarker: (i) => {
         this.project.show.markers?.splice(i, 1);
         this.refreshShowUI();
@@ -187,6 +207,7 @@ export class App {
     this.history.onChange = () => this.renderUndo();
     this.renderer.mediaProvider = (id, clip, local) => this.mediaSource(id, clip, local);
     this.renderer.onNeedRedraw = () => (this.dirty = true);
+    this.timeline.soundName = (id) => this.project.media?.find((m) => m.id === id)?.name.replace(/\.[^.]+$/, '') ?? 'Son';
     this.stage.onResize = () => {
       this.dirty = true;
     };
@@ -1037,7 +1058,7 @@ export class App {
   }
 
   private mediaLibrary() {
-    const items = this.project.media ?? [];
+    const items = (this.project.media ?? []).filter((m) => m.kind !== 'audio');
     return h('div', { class: 'card' },
       h('div', { class: 'card-title' }, 'Vos images et vidéos'),
       items.length ? h('div', { class: 'media-list' }, ...items.map((m) => h('div', { class: 'media-item' },
@@ -1105,6 +1126,7 @@ export class App {
   }
 
   private tabClip(b: HTMLElement) {
+    if (!this.selectedClip && this.selectedSound && this.soundPanel(b)) return;
     const found = this.findClip(this.selectedClip);
     if (!found) {
       add(b, h('p', { class: 'muted' }, 'Sélectionnez un tableau dans la ligne de temps pour régler ses paramètres.'));
@@ -1172,7 +1194,7 @@ export class App {
         changed();
       } }), p.label);
       if (p.type === 'media') {
-        const items = this.project.media ?? [];
+        const items = (this.project.media ?? []).filter((m) => m.kind !== 'audio');
         return h('div', { class: 'field' },
           h('span', { class: 'lbl' }, p.label),
           items.length
@@ -1268,6 +1290,11 @@ export class App {
         } }, icon('music'), h('div', { class: 'dz-title' }, 'Importer une musique'), h('div', { class: 'dz-sub' }, 'MP3, WAV, OGG, M4A… analysée dans le navigateur')),
         h('p', { class: 'muted small' }, 'Le tempo et les temps forts sont détectés automatiquement : les effets pulsent sur le rythme et les tableaux se calent sur les mesures.'),
         h('p', { class: 'muted small' }, 'Musiques libres de droits : Free Music Archive, ccMixter, Musopen (vérifiez toujours la licence et les conditions de diffusion publique).'),
+        h('div', { class: 'card' },
+          h('div', { class: 'card-title' }, '♪ Voix off et bruitages'),
+          h('p', { class: 'muted small' }, 'Ajoutez une narration, des cloches, un orage… Le son est placé à la tête de lecture sur la piste audio, puis se déplace librement.'),
+          h('button', { class: 'btn ghost wide', onclick: () => this.importSound() }, icon('upload'), 'Ajouter un son'),
+        ),
         slider({ label: 'Tempo sans musique (BPM)', min: 60, max: 180, step: 1, value: show.bpm, onInput: (v) => {
           show.bpm = v;
           this.dirty = true;
@@ -1298,6 +1325,11 @@ export class App {
         h('div', { class: 'meters' },
           ...['Basses', 'Médiums', 'Aigus'].map((l) => h('div', { class: 'meter' }, h('div', { class: 'meter-bar' }, h('i', {})), h('span', {}, l)))),
         h('p', { class: 'muted small' }, 'Dans « Réglages › Options avancées », chaque tableau peut réagir aux basses, aux médiums ou aux aigus — par exemple le portail qui pulse sur la grosse caisse et les fenêtres qui scintillent sur les cymbales. Essayez aussi le tableau « Égaliseur ».'),
+      ),
+      h('div', { class: 'card' },
+        h('div', { class: 'card-title' }, '♪ Voix off et bruitages'),
+        h('p', { class: 'muted small' }, 'Ajoutez une narration, des cloches, un orage… Le son est placé à la tête de lecture sur la piste audio, puis se déplace librement.'),
+        h('button', { class: 'btn ghost wide', onclick: () => this.importSound() }, icon('upload'), 'Ajouter un son'),
       ),
       h('div', { class: 'card' },
         h('div', { class: 'card-title' }, icon('flag'), ' Repères'),
@@ -2041,6 +2073,136 @@ export class App {
     );
   }
 
+  // ── voix off et bruitages
+  selectedSound: string | null = null;
+  soundBuffers = new Map<string, AudioBuffer>();
+  private soundNodes: AudioBufferSourceNode[] = [];
+
+  async importSound() {
+    const f = await pickFile('audio/*');
+    if (!f) return;
+    try {
+      this.busy('Lecture du son…');
+      const buf = await decodeAudio(f);
+      const item: MediaItem = { id: uid('m'), name: f.name, kind: 'audio' };
+      (this.project.media ??= []).push(item);
+      this.mediaBlobs.set(item.id, f);
+      this.soundBuffers.set(item.id, buf);
+      const sc: SoundClip = { id: uid('s'), media: item.id, start: Math.round(this.time * 100) / 100, offset: 0, duration: Math.round(buf.duration * 100) / 100, srcDuration: buf.duration, volume: 1, fadeIn: 0.05, fadeOut: 0.3 };
+      (this.project.show.sounds ??= []).push(sc);
+      this.selectedSound = sc.id;
+      this.timeline.selectedSound = sc.id;
+      this.selectedClip = null;
+      this.showTab = 'reglages';
+      this.refreshShowUI();
+      this.scheduleSave();
+      toast(`« ${f.name} » placé à ${fmtTime(sc.start)} sur la piste audio.`, 'ok');
+    } catch (e) {
+      console.error(e);
+      toast('Impossible de lire ce fichier audio.', 'err');
+    } finally {
+      this.busy(null);
+    }
+  }
+
+  deleteSound(id: string) {
+    this.project.show.sounds = (this.project.show.sounds ?? []).filter((x) => x.id !== id);
+    this.selectedSound = null;
+    this.timeline.selectedSound = null;
+    this.refreshShowUI();
+    this.scheduleSave();
+  }
+
+  private soundPanel(b: HTMLElement) {
+    const sc = this.project.show.sounds?.find((x) => x.id === this.selectedSound);
+    if (!sc) return false;
+    const name = this.project.media?.find((m) => m.id === sc.media)?.name ?? 'Son';
+    const ch = () => {
+      this.timeline.render();
+      this.scheduleSave();
+    };
+    add(b,
+      h('div', { class: 'clip-head', style: '--c:#3fd0b4' },
+        h('div', {}, h('small', {}, 'Piste audio'), h('b', {}, '♪ ', name)),
+        h('div', { class: 'row' }, h('button', { class: 'btn icon danger', title: 'Supprimer', onclick: () => this.deleteSound(sc.id) }, icon('trash')))),
+      h('p', { class: 'muted small' }, 'Glissez le son sur la ligne de temps, tirez ses bords pour le rogner. Il est mixé avec la musique à la lecture et dans la vidéo exportée.'),
+      slider({ label: 'Volume', min: 0, max: 2, step: 0.01, value: sc.volume, format: (v) => `${Math.round(v * 100)} %`, onInput: (v) => ((sc.volume = v), ch()) }),
+      slider({ label: 'Fondu d’entrée (s)', min: 0, max: 5, step: 0.05, value: sc.fadeIn, onInput: (v) => ((sc.fadeIn = v), ch()) }),
+      slider({ label: 'Fondu de sortie (s)', min: 0, max: 5, step: 0.05, value: sc.fadeOut, onInput: (v) => ((sc.fadeOut = v), ch()) }),
+      h('div', { class: 'kv' }, h('span', {}, 'Position'), h('b', {}, `${fmtTime(sc.start)} → ${fmtTime(sc.start + sc.duration)}`)),
+      h('button', { class: 'btn ghost wide', onclick: () => this.seek(sc.start) }, 'Aller au début du son'),
+    );
+    return true;
+  }
+
+  /** Programme les sons à partir de la position de lecture. */
+  private startSounds() {
+    if (!this.ac) return;
+    for (const sc of this.project.show.sounds ?? []) {
+      const buf = this.soundBuffers.get(sc.media);
+      if (!buf || sc.start + sc.duration <= this.time) continue;
+      const src = this.ac.createBufferSource();
+      src.buffer = buf;
+      const g = this.ac.createGain();
+      src.connect(g).connect(this.ac.destination);
+      const now = this.ac.currentTime;
+      const when = now + Math.max(0, sc.start - this.time);
+      const into = Math.max(0, this.time - sc.start);
+      this.scheduleGain(g.gain, sc, when - into, now);
+      src.start(when, sc.offset + into, sc.duration - into);
+      this.soundNodes.push(src);
+    }
+  }
+
+  /** Enveloppe de volume (fondus) d'un son commençant au temps absolu t0. */
+  private scheduleGain(p: AudioParam, sc: SoundClip, t0: number, now = 0) {
+    const fi = Math.min(sc.fadeIn, sc.duration / 2), fo = Math.min(sc.fadeOut, sc.duration / 2);
+    const at = (x: number) => Math.max(now, t0 + x);
+    const env = (x: number) => sc.volume * Math.min(1, fi > 0 ? x / fi : 1, fo > 0 ? (sc.duration - x) / fo : 1);
+    p.setValueAtTime(env(Math.max(0, now - t0)), at(0));
+    if (fi > 0) p.linearRampToValueAtTime(sc.volume, at(fi));
+    p.setValueAtTime(sc.volume, at(sc.duration - fo));
+    p.linearRampToValueAtTime(0, at(sc.duration));
+  }
+
+  private stopSounds() {
+    for (const n of this.soundNodes) {
+      try {
+        n.stop();
+      } catch {
+        /* déjà arrêté */
+      }
+    }
+    this.soundNodes = [];
+  }
+
+  /** Mixage musique + voix off + bruitages pour l'export. */
+  async mixAudio(t0: number, t1: number): Promise<AudioBuffer | null> {
+    const sounds = this.project.show.sounds ?? [];
+    if (!this.audio && !sounds.length) return null;
+    const sr = 48000;
+    const ctx = new OfflineAudioContext(2, Math.max(1, Math.ceil((t1 - t0) * sr)), sr);
+    if (this.audio) {
+      const m = ctx.createBufferSource();
+      m.buffer = this.audio.analysis.buffer;
+      m.connect(ctx.destination);
+      if (t0 < this.audio.analysis.duration) m.start(0, t0);
+    }
+    for (const sc of sounds) {
+      const buf = this.soundBuffers.get(sc.media);
+      if (!buf || sc.start + sc.duration <= t0 || sc.start >= t1) continue;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const g = ctx.createGain();
+      src.connect(g).connect(ctx.destination);
+      const rel = sc.start - t0;
+      const into = Math.max(0, -rel);
+      this.scheduleGain(g.gain, sc, rel, 0);
+      src.start(Math.max(0, rel), sc.offset + into, sc.duration - into);
+    }
+    return await ctx.startRendering();
+  }
+
   // ── annuler / rétablir
   undo() {
     const st = this.history.undo(this.project);
@@ -2091,6 +2253,14 @@ export class App {
   private async prepareMedia(item: MediaItem) {
     const blob = this.mediaBlobs.get(item.id);
     if (!blob) return;
+    if (item.kind === 'audio') {
+      try {
+        this.soundBuffers.set(item.id, await decodeAudio(blob));
+      } catch {
+        /* fichier illisible */
+      }
+      return;
+    }
     if (item.kind === 'image') {
       // passage par un canevas : WebGL ignore le retournement vertical pour les ImageBitmap
       const bmp = await createImageBitmap(blob);
@@ -2346,6 +2516,11 @@ export class App {
   }
 
   private startAudio() {
+    if (this.project.show.sounds?.length) {
+      this.ac ??= new AudioContext();
+      this.ac.resume();
+      this.startSounds();
+    }
     if (!this.audio) return;
     this.ac ??= new AudioContext();
     this.ac.resume();
@@ -2359,6 +2534,7 @@ export class App {
   }
 
   private stopAudio() {
+    this.stopSounds();
     try {
       this.audioNode?.stop();
     } catch {
@@ -2407,6 +2583,7 @@ export class App {
         scene: this.scene, analysis: this.audio?.analysis ?? null, width: W, height: H, fps: o.fps, quality: o.quality, mode: (present ? 'simulation' : o.mode) as ViewMode, onProgress, signal: ctrl.signal, finalQuality: o.final,
         mediaProvider: (id: string, clip: Clip, local: number) => this.mediaSource(id, clip, local),
         prepareFrame: (t: number, show: typeof this.project.show) => this.syncVideosAt(t, show),
+        audioMix: (a: number, b2: number) => this.mixAudio(a, b2),
       };
       if (o.content === 'clips') {
         const files: Record<string, Uint8Array> = {};
@@ -2829,6 +3006,7 @@ export class App {
           this.multi.clear();
           this.refreshShowUI();
         } else if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedClip) this.deleteSelection();
+        else if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedSound) this.deleteSound(this.selectedSound);
         else if (e.key === 'Home') this.seek(0);
         else if (e.key === 'f') this.fullscreen();
       } else if (this.step === 'calques') {

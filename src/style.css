@@ -357,3 +357,10 @@ details.card.adv[open] > summary::after { transform: rotate(90deg); }
 
 .facade-sel { flex-shrink: 0; min-width: 120px; }
 header.top .steps { flex-shrink: 1; min-width: 0; }
+
+.tl-track.audio { background: rgba(63, 208, 180, 0.04); }
+.tl-clip.sound { background: repeating-linear-gradient(90deg, rgba(63,208,180,0.28) 0 2px, rgba(63,208,180,0.12) 2px 5px); border-color: rgba(63, 208, 180, 0.6); }
+
+.tl-clip.narrow .tl-resize { width: 4px; }
+.tl-clip.narrow .tl-resize::after { display: none; }
+.tl-clip.narrow { padding: 6px 3px; }
