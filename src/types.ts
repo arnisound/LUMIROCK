@@ -33,6 +33,11 @@ export interface Zone {
 
 export type ParamValue = number | string | boolean;
 
+export interface Keyframe {
+  t: number; // avancement dans le tableau (0..1)
+  v: ParamValue;
+}
+
 export interface Clip {
   id: string;
   effect: string;
@@ -40,10 +45,30 @@ export interface Clip {
   params: Record<string, ParamValue>;
   transition: string; // transition vers le tableau suivant
   transitionDuration: number;
+  keys?: Record<string, Keyframe[]>; // images clés par paramètre
+}
+
+export type BlendMode = 'add' | 'screen' | 'max';
+
+/** Piste superposée (les lumières s'additionnent à la piste principale). */
+export interface Layer {
+  id: string;
+  name: string;
+  clips: Clip[];
+  opacity: number;
+  blend: BlendMode;
+  muted?: boolean;
+}
+
+export interface MediaItem {
+  id: string;
+  name: string;
+  kind: 'image' | 'video';
 }
 
 export interface Show {
-  clips: Clip[];
+  clips: Clip[]; // piste principale
+  layers?: Layer[];
   bpm: number;
   master: { brightness: number; bloom: number; relief: number; vignette: number; ambient?: number };
 }
@@ -56,6 +81,7 @@ export interface Project {
   zones: Zone[];
   show: Show;
   depthSource: 'auto' | 'ia';
+  media?: MediaItem[];
 }
 
 export function uid(prefix = 'z') {

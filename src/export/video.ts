@@ -22,6 +22,9 @@ export interface VideoExportOptions {
   mode?: ViewMode;
   onProgress?: (ratio: number, msg: string) => void;
   signal?: AbortSignal;
+  mediaProvider?: Renderer['mediaProvider'];
+  prepareFrame?: (t: number, show: Show) => Promise<void>;
+  finalQuality?: boolean;
 }
 
 export async function videoCodecFor(width: number, height: number) {
@@ -47,6 +50,8 @@ export async function exportVideo(o: VideoExportOptions): Promise<{ blob: Blob; 
   const renderer = new Renderer(canvas);
   renderer.setScene(o.scene);
   renderer.resize(W, H);
+  renderer.mediaProvider = o.mediaProvider ?? null;
+  renderer.quality = o.finalQuality ? 1 : 0;
   const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target: new BufferTarget() });
   const video = new CanvasSource(canvas, { codec, quality: o.quality === 'tres-haute' ? QUALITY_VERY_HIGH : QUALITY_HIGH, keyFrameInterval: 1 });
   output.addVideoTrack(video, { frameRate: o.fps });
@@ -66,6 +71,7 @@ export async function exportVideo(o: VideoExportOptions): Promise<{ blob: Blob; 
       throw new DOMException('Export annulé', 'AbortError');
     }
     const t = o.t0 + i / o.fps;
+    if (o.prepareFrame) await o.prepareFrame(t, o.show);
     renderer.render(o.show, t, audioFrameAt(t, o.analysis, o.show.bpm), o.mode ?? 'projection', { fade: o.fade });
     await video.add(i / o.fps, 1 / o.fps);
     if (i % 5 === 0) {

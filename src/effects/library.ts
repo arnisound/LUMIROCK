@@ -2,7 +2,7 @@
 // Chaque effet renvoie la LUMIÈRE à projeter sur la façade (pas l'image vue) :
 // la simulation de nuit calcule ensuite « façade × (ambiance + lumière projetée) ».
 
-export type ParamType = 'range' | 'color' | 'text' | 'select' | 'toggle';
+export type ParamType = 'range' | 'color' | 'text' | 'select' | 'toggle' | 'media';
 export type UniformSlot = 'uIntensity' | 'uSpeed' | 'uColA' | 'uColB' | 'uParamA' | 'uParamB' | 'uParamC' | 'aux'
   | 'uTarget' | 'uTargetBg' | 'uReact' | 'uMirror' | 'uHue' | 'uSat';
 
@@ -1162,6 +1162,47 @@ vec3 effect(vec2 uv) {
   float neb = fbm(asp(uv) * 2.5 + uT * 0.02);
   return uColB * neb * 0.6 + vec3(1.0, 0.97, 0.9) * glow + uColA * lines * 0.8 + uColB * lum(albedo(uv)) * 0.25;
 }`,
+  },
+  // ───────────────────────────── MÉDIAS ─────────────────────────────
+  {
+    id: 'media', name: 'Image / vidéo', category: 'Illusions', mood: 'calme', defaultDuration: 10,
+    description: 'Projette votre image ou votre vidéo sur toute la façade, ou cadrée dans chaque calque ciblé (ex. une vidéo dans chaque fenêtre).',
+    tags: [],
+    params: [
+      { key: 'media', label: 'Média', type: 'media', slot: 'aux', default: '' },
+      I(),
+      SEL('fit', 'Placement', 'uParamC', ['Toute la façade', 'Dans chaque calque (cadré)'], 0),
+      R('stone', 'Mélange avec la pierre', 'uParamA', 0.4),
+      R('zoom', 'Zoom', 'uParamB', 0, 0, 1),
+    ],
+    glsl: `
+vec2 coverUV(vec2 q, float boxAspect) {
+  vec2 s = vec2(1.0);
+  if (uAuxAspect > boxAspect) s.x = boxAspect / uAuxAspect; else s.y = uAuxAspect / boxAspect;
+  return (q - 0.5) * s / (1.0 + uParamB * 1.5) + 0.5;
+}
+vec3 effect(vec2 uv) {
+  vec2 q = uv;
+  float boxA = uAspect;
+  if (uParamC > 0.5) {
+    int id = zoneId(uv);
+    if (id == 0) return vec3(0.0);
+    vec4 g = zoneGeom(id);
+    q = (uv - (g.xy - g.zw * 0.5)) / max(g.zw, vec2(1e-4));
+    boxA = g.z * uAspect / max(g.w, 1e-4);
+  }
+  vec3 c = texture(uAux, coverUV(q, boxA)).rgb;
+  c *= mix(1.0, 0.4 + 1.2 * lum(albedo(uv)), uParamA);
+  return c * 1.25;
+}`,
+  },
+  {
+    id: 'vide', name: 'Pause (noir)', category: 'Lumière', mood: 'calme', defaultDuration: 4,
+    description: 'Aucune lumière : sert de silence visuel ou à espacer les tableaux d’une piste superposée.',
+    tags: [],
+    params: [],
+    glsl: `
+vec3 effect(vec2 uv) { return vec3(0.0); }`,
   },
 ];
 

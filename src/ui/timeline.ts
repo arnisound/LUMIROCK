@@ -1,17 +1,28 @@
-// Ligne de temps : tableaux, forme d'onde, tête de lecture.
+// Ligne de temps : pistes de tableaux, forme d'onde, tête de lecture.
 import { clear, fmtTime, h, icon } from './dom';
 import { CATEGORY_COLORS, EFFECT_MAP } from '../effects/library';
-import { computeTimings, showDuration } from '../gl/renderer';
+import { showDuration, trackTimings } from '../gl/renderer';
 import type { AudioAnalysis } from '../audio';
-import type { Show } from '../types';
+import type { Clip, Show } from '../types';
+
+export const MAIN_TRACK = 'main';
 
 export interface TimelineEvents {
   seek: (t: number) => void;
   select: (id: string | null) => void;
-  reorder: (from: number, to: number) => void;
+  selectTrack: (trackId: string) => void;
+  reorder: (trackId: string, from: number, to: number) => void;
   resize: (id: string, duration: number, final: boolean) => void;
   togglePlay: () => void;
   home: () => void;
+  addTrack: () => void;
+}
+
+interface TrackView {
+  id: string;
+  name: string;
+  clips: Clip[];
+  muted?: boolean;
 }
 
 export class Timeline {
@@ -20,7 +31,7 @@ export class Timeline {
   private content: HTMLElement;
   private ruler: HTMLCanvasElement;
   private wave: HTMLCanvasElement;
-  private track: HTMLElement;
+  private tracks: HTMLElement;
   private head: HTMLElement;
   private timeLbl: HTMLElement;
   private playBtn: HTMLButtonElement;
@@ -29,6 +40,7 @@ export class Timeline {
   pps = 10;
   loop = true;
   snap = true;
+  activeTrack = MAIN_TRACK;
   private show: Show | null = null;
   private analysis: AudioAnalysis | null = null;
   private selected: string | null = null;
@@ -52,9 +64,9 @@ export class Timeline {
     } }, 'Aimant');
     this.ruler = h('canvas', { class: 'tl-ruler', height: 22 });
     this.wave = h('canvas', { class: 'tl-wave', height: 34 });
-    this.track = h('div', { class: 'tl-track' });
+    this.tracks = h('div', { class: 'tl-tracks' });
     this.head = h('div', { class: 'tl-head' });
-    this.content = h('div', { class: 'tl-content' }, this.ruler, this.wave, this.track, this.head);
+    this.content = h('div', { class: 'tl-content' }, this.ruler, this.wave, this.tracks, this.head);
     this.scroll = h('div', { class: 'tl-scroll' }, this.content);
     this.root = h(
       'div',
@@ -62,6 +74,7 @@ export class Timeline {
       h('div', { class: 'tl-bar' },
         h('button', { class: 'btn icon', title: 'Revenir au début', onclick: () => ev.home() }, icon('home')),
         this.playBtn, this.timeLbl, loopBtn,
+        h('button', { class: 'btn small', title: 'Ajouter une piste superposée (les lumières s’additionnent)', onclick: () => ev.addTrack() }, icon('plus'), 'Piste'),
         h('div', { class: 'spacer' }),
         this.extra,
         snapBtn,
@@ -82,9 +95,11 @@ export class Timeline {
         el.addEventListener('pointerup', () => el.removeEventListener('pointermove', mv), { once: true });
       });
     }
-    this.track.addEventListener('pointerdown', (e) => {
-      if (e.target === this.track) {
+    this.tracks.addEventListener('pointerdown', (e) => {
+      const row = (e.target as HTMLElement).closest('.tl-track') as HTMLElement | null;
+      if (row && e.target === row) {
         seekFrom(e);
+        ev.selectTrack(row.dataset.track!);
         ev.select(null);
       }
     });
@@ -123,13 +138,22 @@ export class Timeline {
     }
   }
 
+  private trackViews(): TrackView[] {
+    if (!this.show) return [];
+    return [
+      { id: MAIN_TRACK, name: 'Piste principale', clips: this.show.clips },
+      ...(this.show.layers ?? []).map((l) => ({ id: l.id, name: l.name, clips: l.clips, muted: l.muted })),
+    ];
+  }
+
   render() {
     if (!this.show) return;
-    const show = this.show;
-    const total = showDuration(show);
+    const total = showDuration(this.show);
     const len = Math.max(total, this.analysis?.duration ?? 0) + 4;
     const W = Math.max(this.scroll.clientWidth, Math.ceil(len * this.pps) + 16);
     this.content.style.width = `${W}px`;
+    const views = this.trackViews();
+    this.root.style.height = `${126 + views.length * 78 + (this.analysis ? 0 : -34)}px`;
     // règle
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     this.ruler.width = W * dpr;
@@ -172,40 +196,50 @@ export class Timeline {
         wc.globalAlpha = 0.75;
         wc.fillRect(8 + x, 17 - hh / 2, 1, hh);
       }
-      // temps forts (mesures)
       wc.globalAlpha = 0.35;
       wc.fillStyle = '#fff';
       const bar = (4 * 60) / a.bpm;
       for (let t = a.offset; t < a.duration; t += bar) wc.fillRect(8 + t * this.pps, 0, 1, 34);
       wc.globalAlpha = 1;
     }
-    // tableaux
-    clear(this.track);
-    const timings = computeTimings(show);
+    // pistes
+    clear(this.tracks);
+    for (const view of views) {
+      const row = h('div', { class: `tl-track${view.id === this.activeTrack ? ' active' : ''}${view.muted ? ' muted' : ''}`, 'data-track': view.id },
+        h('span', { class: 'tl-track-name' }, view.name));
+      this.fillTrack(row, view);
+      this.tracks.appendChild(row);
+    }
+    this.setTime(this.time);
+  }
+
+  private fillTrack(row: HTMLElement, view: TrackView) {
+    const show = this.show!;
+    const timings = trackTimings(view.clips);
     timings.forEach((tm, idx) => {
       const e = EFFECT_MAP.get(tm.clip.effect);
-      const color = e ? CATEGORY_COLORS[e.category] : '#888';
+      const color = tm.clip.effect === 'vide' ? '#3a4150' : e ? CATEGORY_COLORS[e.category] : '#888';
       const handle = h('div', { class: 'tl-resize', title: 'Glisser pour changer la durée' });
+      const hasKeys = tm.clip.keys && Object.keys(tm.clip.keys).length > 0;
       const el = h(
         'div',
         {
-          class: `tl-clip${tm.clip.id === this.selected ? ' sel' : ''}`,
+          class: `tl-clip${tm.clip.id === this.selected ? ' sel' : ''}${tm.clip.effect === 'vide' ? ' empty' : ''}`,
           style: `left:${8 + tm.start * this.pps}px;width:${Math.max(4, tm.clip.duration * this.pps - 2)}px;--c:${color}`,
           title: `${e?.name ?? tm.clip.effect} — ${tm.clip.duration.toFixed(1)} s`,
         },
-        h('div', { class: 'tl-clip-name' }, e?.name ?? tm.clip.effect),
+        h('div', { class: 'tl-clip-name' }, hasKeys ? '◆ ' : '', e?.name ?? tm.clip.effect),
         h('div', { class: 'tl-clip-dur' }, `${tm.clip.duration.toFixed(1)} s`),
         tm.clip.transition !== 'cut' && idx < timings.length - 1 ? h('div', { class: 'tl-trans', style: `width:${tm.clip.transitionDuration * this.pps}px` }) : null,
         handle,
       );
-      // redimensionnement
       handle.addEventListener('pointerdown', (e) => {
         e.stopPropagation();
         handle.setPointerCapture(e.pointerId);
         const x0 = e.clientX, d0 = tm.clip.duration;
         const beat = 60 / (this.analysis?.bpm ?? show.bpm);
         const calc = (m: PointerEvent) => {
-          let d = Math.max(1, d0 + (m.clientX - x0) / this.pps);
+          let d = Math.max(0.5, d0 + (m.clientX - x0) / this.pps);
           if (this.snap) d = Math.max(beat, Math.round(d / beat) * beat);
           return Math.round(d * 100) / 100;
         };
@@ -216,9 +250,9 @@ export class Timeline {
           this.ev.resize(tm.clip.id, calc(m), true);
         }, { once: true });
       });
-      // sélection + déplacement
       el.addEventListener('pointerdown', (e) => {
         el.setPointerCapture(e.pointerId);
+        this.ev.selectTrack(view.id);
         this.ev.select(tm.clip.id);
         const x0 = e.clientX;
         let moved = false;
@@ -233,21 +267,19 @@ export class Timeline {
         el.addEventListener('pointermove', mv);
         el.addEventListener('pointerup', (m) => {
           el.removeEventListener('pointermove', mv);
+          const r = this.content.getBoundingClientRect();
           if (!moved) {
-            const r = this.content.getBoundingClientRect();
             this.ev.seek(Math.max(0, (m.clientX - r.left - 8) / this.pps));
             return;
           }
-          const r = this.content.getBoundingClientRect();
           const tx = (m.clientX - r.left - 8) / this.pps;
           let to = timings.findIndex((x) => tx < (x.start + x.end) / 2);
           if (to < 0) to = timings.length - 1;
           else if (to > idx) to -= 1;
-          this.ev.reorder(idx, to);
+          this.ev.reorder(view.id, idx, to);
         }, { once: true });
       });
-      this.track.appendChild(el);
+      row.appendChild(el);
     });
-    this.setTime(this.time);
   }
 }

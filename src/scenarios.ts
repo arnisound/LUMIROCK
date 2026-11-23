@@ -179,7 +179,7 @@ function pick<T>(arr: T[]): T {
 }
 
 function surprise(): Scenario {
-  const byMood = (m: string) => EFFECTS.filter((e) => e.mood === m && e.id !== 'texte');
+  const byMood = (m: string) => EFFECTS.filter((e) => e.mood === m && !['texte', 'media', 'vide'].includes(e.id));
   const calme = byMood('calme'), moyen = byMood('moyen'), fort = byMood('fort');
   const used = new Set<string>();
   const take = (arr: typeof EFFECTS) => {

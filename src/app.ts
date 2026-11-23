@@ -4,21 +4,23 @@ import { fitToWork, rectify } from './analysis/rectify';
 import { detectOpenings } from './analysis/detect';
 import { AudioAnalysis, analyseAudio, audioFrameAt, decodeAudio } from './audio';
 import { CATEGORIES, CATEGORY_COLORS, COMMON_PARAMS, EFFECTS, EFFECT_MAP, ParamDef, TRANSITIONS } from './effects/library';
-import { Renderer, SceneMaps, ViewMode, computeTimings, showDuration } from './gl/renderer';
+import { Renderer, SceneMaps, ViewMode, showDuration, trackTimings } from './gl/renderer';
 import { SCENARIOS, compose, defaultShow, newClip } from './scenarios';
 import { TEMPLATES } from './templates';
-import { Project, Pt, ZONE_TYPES, ZoneTypeKey, uid, zoneType } from './types';
+import { Clip, Layer, MediaItem, Project, Pt, ZONE_TYPES, ZoneTypeKey, uid, zoneType } from './types';
+import { History } from './history';
+import { paramAt, removeKey, setKey } from './keys';
 import { QuadEditor, Tool, ZoneEditor } from './ui/editors';
 import { $, add, clear, fmtTime, h, icon, pickFile, select, slider, toast } from './ui/dom';
 import { Stage } from './ui/stage';
-import { Timeline } from './ui/timeline';
+import { MAIN_TRACK, Timeline } from './ui/timeline';
 import { buildKit, canvasToPng, drawTemplate, zipFiles } from './export/kit';
 import { exportClips, exportVideo, videoCodecFor } from './export/video';
 import { SavedState, autosave, download, loadAutosave, loadLumirock, saveLumirock } from './export/projectio';
 
 type Step = 'source' | 'redresser' | 'calques' | 'spectacle' | 'export';
 type MapView = 'photo' | 'depth' | 'normal' | 'edges';
-type ShowTab = 'scenarios' | 'tableaux' | 'reglages' | 'musique' | 'ambiance';
+type ShowTab = 'scenarios' | 'tableaux' | 'reglages' | 'pistes' | 'musique' | 'ambiance';
 
 const STEPS: { id: Step; label: string }[] = [
   { id: 'source', label: 'Monument' },
@@ -94,6 +96,10 @@ export class App {
   private els!: { header: HTMLElement; side: HTMLElement; tl: HTMLElement; main: HTMLElement; viewSeg: HTMLElement; busy: HTMLElement };
   private exportOpts = { long: 1920, fps: 30, quality: 'haute' as 'haute' | 'tres-haute', content: 'full' as 'full' | 'clips' | 'selected', audio: true, mode: 'projection' as ViewMode };
   private detectSens = 0.5;
+  history = new History();
+  mediaBlobs = new Map<string, Blob>();
+  private mediaRuntime = new Map<string, { image?: ImageBitmap; video?: HTMLVideoElement; used?: number }>();
+  private frameNo = 0;
   private newScenarioDur = 120;
 
   constructor(private root: HTMLElement) {
@@ -116,15 +122,18 @@ export class App {
         if (id) this.showTab = 'reglages';
         this.refreshShowUI();
       },
-      reorder: (from, to) => {
-        const c = this.project.show.clips;
+      selectTrack: (tid) => {
+        this.timeline.activeTrack = tid;
+      },
+      reorder: (tid, from, to) => {
+        const c = this.trackList(tid);
         const [m] = c.splice(from, 1);
         c.splice(to, 0, m);
         this.refreshShowUI();
         this.scheduleSave();
       },
       resize: (id, d, final) => {
-        const c = this.project.show.clips.find((x) => x.id === id);
+        const c = this.findClip(id)?.clip;
         if (!c) return;
         c.duration = d;
         c.transitionDuration = Math.min(c.transitionDuration, d / 2);
@@ -137,7 +146,10 @@ export class App {
       },
       togglePlay: () => this.togglePlay(),
       home: () => this.seek(0),
+      addTrack: () => this.addLayer(),
     });
+    this.history.onChange = () => this.renderUndo();
+    this.renderer.mediaProvider = (id, clip, local) => this.mediaSource(id, clip, local);
     this.stage.onResize = () => {
       this.dirty = true;
     };
@@ -196,6 +208,12 @@ export class App {
       ),
       h('div', { class: 'spacer' }),
       h('div', { class: 'actions' },
+        (() => {
+          const u = h('button', { class: 'btn icon ghost', title: 'Annuler (Ctrl+Z)', disabled: !this.history.canUndo(), onclick: () => this.undo() }, icon('undo'));
+          const r = h('button', { class: 'btn icon ghost', title: 'Rétablir (Ctrl+Maj+Z)', disabled: !this.history.canRedo(), onclick: () => this.redo() }, icon('redo'));
+          this.undoBtns = { u, r };
+          return h('div', { class: 'undo' }, u, r);
+        })(),
         h('button', { class: 'btn ghost', title: 'Nouveau projet', onclick: () => this.newProject() }, 'Nouveau'),
         h('button', { class: 'btn ghost', title: 'Ouvrir un fichier .lumirock', onclick: async () => {
           const f = await pickFile('.lumirock,application/zip');
@@ -481,6 +499,7 @@ export class App {
       { id: 'scenarios', l: 'Scénarios' },
       { id: 'tableaux', l: 'Tableaux' },
       { id: 'reglages', l: 'Réglages' },
+      { id: 'pistes', l: 'Pistes' },
       { id: 'musique', l: 'Musique' },
       { id: 'ambiance', l: 'Ambiance' },
     ];
@@ -493,6 +512,7 @@ export class App {
     if (this.showTab === 'scenarios') this.tabScenarios(body);
     else if (this.showTab === 'tableaux') this.tabLibrary(body);
     else if (this.showTab === 'reglages') this.tabClip(body);
+    else if (this.showTab === 'pistes') this.tabTracks(body);
     else if (this.showTab === 'musique') this.tabMusic(body);
     else this.tabAmbiance(body);
   }
@@ -525,8 +545,78 @@ export class App {
     );
   }
 
+  private tabTracks(b: HTMLElement) {
+    const show = this.project.show;
+    const layers = show.layers ?? [];
+    const changed = () => {
+      this.timeline.render();
+      this.dirty = true;
+      this.scheduleSave();
+    };
+    add(b,
+      h('p', { class: 'muted' }, 'Les pistes superposées s’ajoutent à la piste principale : par exemple un fond « Course du soleil » et, par-dessus, « Mille bougies » ciblé sur les fenêtres. Utilisez « Pause (noir) » pour espacer les tableaux d’une piste.'),
+      h('div', { class: 'card' }, h('div', { class: 'card-title' }, 'Piste principale'),
+        h('p', { class: 'muted small' }, `${show.clips.length} tableaux`),
+        h('button', { class: 'btn ghost wide', onclick: () => {
+          this.timeline.activeTrack = MAIN_TRACK;
+          this.showTab = 'tableaux';
+          this.refreshShowUI();
+        } }, icon('plus'), 'Ajouter un tableau sur cette piste')),
+      ...layers.map((l) => h('div', { class: 'card' },
+        h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Nom'), h('input', { type: 'text', value: l.name, oninput: (e: Event) => {
+          l.name = (e.target as HTMLInputElement).value;
+          changed();
+        } })),
+        slider({ label: 'Opacité', min: 0, max: 1.5, step: 0.01, value: l.opacity, onInput: (v) => {
+          l.opacity = v;
+          changed();
+        } }),
+        select<string>({ label: 'Mélange', value: l.blend, options: [
+          { value: 'add', label: 'Addition (lumières qui s’ajoutent)' },
+          { value: 'screen', label: 'Superposition douce' },
+          { value: 'max', label: 'Le plus lumineux' },
+        ], onChange: (v) => {
+          l.blend = v as Layer['blend'];
+          changed();
+        } }),
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!l.muted, onchange: (e: Event) => {
+          l.muted = (e.target as HTMLInputElement).checked;
+          changed();
+        } }), 'Masquer cette piste'),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn ghost', onclick: () => {
+            this.timeline.activeTrack = l.id;
+            this.showTab = 'tableaux';
+            this.refreshShowUI();
+          } }, icon('plus'), 'Ajouter un tableau'),
+          h('button', { class: 'btn danger', title: 'Supprimer la piste', onclick: () => this.deleteLayer(l.id) }, icon('trash')),
+        ),
+      )),
+      h('button', { class: 'btn primary wide', onclick: () => this.addLayer() }, icon('plus'), 'Nouvelle piste superposée'),
+    );
+  }
+
+  private mediaLibrary() {
+    const items = this.project.media ?? [];
+    return h('div', { class: 'card' },
+      h('div', { class: 'card-title' }, 'Vos images et vidéos'),
+      items.length ? h('div', { class: 'media-list' }, ...items.map((m) => h('div', { class: 'media-item' },
+        h('span', {}, m.kind === 'video' ? '🎬' : '🖼'),
+        h('span', { class: 'zn' }, m.name),
+        h('button', { class: 'btn small', title: 'Ajouter un tableau avec ce média', onclick: () => this.addClip('media', { media: m.id }) }, icon('plus')),
+        h('button', { class: 'btn small danger', title: 'Retirer du projet', onclick: () => this.removeMedia(m.id) }, '×'),
+      ))) : h('p', { class: 'muted small' }, 'Logo, blason, photos d’archives, vidéos… Placez-les sur toute la façade ou dans chaque fenêtre.'),
+      h('button', { class: 'btn ghost wide', onclick: async () => {
+        const id = await this.importMedia();
+        if (id) this.addClip('media', { media: id });
+      } }, icon('upload'), 'Importer une image ou une vidéo'),
+    );
+  }
+
   private tabLibrary(b: HTMLElement) {
-    add(b, h('p', { class: 'muted' }, 'Cliquez sur un tableau pour l’ajouter après le tableau sélectionné.'));
+    const layer = this.project.show.layers?.find((l) => l.id === this.timeline.activeTrack);
+    add(b, h('p', { class: 'muted' }, 'Cliquez sur un tableau pour l’ajouter après le tableau sélectionné', layer ? h('b', {}, ` (piste « ${layer.name} »)`) : '', '.'));
+    add(b, this.mediaLibrary());
     for (const cat of CATEGORIES) {
       add(b, h('h3', { class: 'cat', style: `--c:${CATEGORY_COLORS[cat]}` }, cat));
       add(b, h('div', { class: 'fx-grid' },
@@ -538,13 +628,16 @@ export class App {
   }
 
   private tabClip(b: HTMLElement) {
-    const clip = this.project.show.clips.find((c) => c.id === this.selectedClip);
-    if (!clip) {
+    const found = this.findClip(this.selectedClip);
+    if (!found) {
       add(b, h('p', { class: 'muted' }, 'Sélectionnez un tableau dans la ligne de temps pour régler ses paramètres.'));
       return;
     }
+    const clip = found.clip;
+    const list = found.list;
     const e = EFFECT_MAP.get(clip.effect)!;
-    const idx = this.project.show.clips.indexOf(clip);
+    const idx = list.indexOf(clip);
+    const prog = Math.min(1, Math.max(0, (this.time - found.start) / clip.duration));
     const changed = () => {
       this.dirty = true;
       this.scheduleSave();
@@ -554,23 +647,44 @@ export class App {
       const fresh = newClip(v, clip.duration);
       clip.effect = v;
       clip.params = { ...fresh.params };
-      for (const k of ['colorA', 'colorB', 'intensity']) if (k in keep && k in clip.params) clip.params[k] = keep[k];
+      clip.keys = undefined;
+      for (const k of ['colorA', 'colorB', 'intensity', '_target', '_targetBg', '_react', '_mirror', '_hue', '_sat']) if (k in keep && k in clip.params) clip.params[k] = keep[k];
       this.refreshShowUI();
       changed();
     } });
-    const control = (p: ParamDef) => {
-      const v = clip.params[p.key] ?? p.default;
-      if (p.type === 'range') return slider({ label: p.label, min: p.min!, max: p.max!, step: p.step!, value: Number(v), onInput: (x) => {
-        clip.params[p.key] = x;
+    const hasKeys = (k: string) => !!clip.keys?.[k]?.length;
+    const setVal = (k: string, v: number | string) => {
+      if (hasKeys(k)) setKey(clip, k, prog, v);
+      else clip.params[k] = v;
+      changed();
+    };
+    const keyUI = (p: ParamDef, el: HTMLElement) => {
+      if (p.type !== 'range' && p.type !== 'color') return el;
+      const btn = h('button', { class: `kf-btn${hasKeys(p.key) ? ' on' : ''}`, title: `Image clé à ${Math.round(prog * 100)} % du tableau (placez la tête de lecture, puis réglez)`, onclick: (ev: Event) => {
+        ev.preventDefault();
+        setKey(clip, p.key, prog, paramAt(clip, p.key, prog, p.default));
+        this.refreshShowUI();
         changed();
-      } });
+      } }, '◆');
+      const chips = hasKeys(p.key)
+        ? h('div', { class: 'kf-chips' }, ...clip.keys![p.key].map((k, i) => h('span', { class: 'kf-chip' },
+            h('button', { class: 'kf-go', title: 'Aller à cette image clé', onclick: () => this.seek(found.start + k.t * clip.duration + 0.001) },
+              p.type === 'color' ? h('i', { class: 'kf-sw', style: `background:${k.v}` }) : null, `${Math.round(k.t * 100)} %${p.type === 'range' ? ' · ' + Number(k.v).toFixed(2) : ''}`),
+            h('button', { class: 'kf-x', title: 'Supprimer', onclick: () => {
+              removeKey(clip, p.key, i);
+              this.refreshShowUI();
+              changed();
+            } }, '×'))))
+        : null;
+      return h('div', { class: 'kf-wrap' }, el, btn, chips);
+    };
+    const control = (p: ParamDef): HTMLElement => {
+      const v = paramAt(clip, p.key, prog, p.default);
+      if (p.type === 'range') return keyUI(p, slider({ label: p.label, min: p.min!, max: p.max!, step: p.step!, value: Number(v), onInput: (x) => setVal(p.key, x) }));
       if (p.type === 'color') {
         const inp = h('input', { type: 'color', value: String(v) });
-        inp.addEventListener('input', () => {
-          clip.params[p.key] = inp.value;
-          changed();
-        });
-        return h('label', { class: 'field color' }, h('span', { class: 'lbl' }, p.label), inp);
+        inp.addEventListener('input', () => setVal(p.key, inp.value));
+        return keyUI(p, h('label', { class: 'field color' }, h('span', { class: 'lbl' }, p.label), inp));
       }
       if (p.type === 'select') return select<number>({ label: p.label, value: Number(v), options: p.options!, onChange: (x) => {
         clip.params[p.key] = x;
@@ -580,6 +694,26 @@ export class App {
         clip.params[p.key] = (ev.target as HTMLInputElement).checked;
         changed();
       } }), p.label);
+      if (p.type === 'media') {
+        const items = this.project.media ?? [];
+        return h('div', { class: 'field' },
+          h('span', { class: 'lbl' }, p.label),
+          items.length
+            ? select<string>({ value: String(v), options: [{ value: '', label: '— choisir —' }, ...items.map((m) => ({ value: m.id, label: `${m.kind === 'video' ? '🎬' : '🖼'} ${m.name}` }))], onChange: (x) => {
+                clip.params.media = x;
+                changed();
+              } })
+            : h('p', { class: 'muted small' }, 'Aucun média dans le projet.'),
+          h('button', { class: 'btn ghost', onclick: async () => {
+            const id = await this.importMedia();
+            if (id) {
+              clip.params.media = id;
+              changed();
+              this.renderSide();
+            }
+          } }, icon('upload'), 'Importer une image ou une vidéo'),
+        );
+      }
       const ta = h('textarea', { rows: 2 }, String(v));
       ta.addEventListener('input', () => {
         clip.params[p.key] = ta.value;
@@ -594,13 +728,14 @@ export class App {
       h('div', { class: 'clip-head', style: `--c:${CATEGORY_COLORS[e.category]}` },
         h('div', {}, h('small', {}, `Tableau ${idx + 1} · ${e.category}`), h('b', {}, e.name)),
         h('div', { class: 'row' },
-          h('button', { class: 'btn icon', title: 'Déplacer avant', disabled: idx === 0, onclick: () => this.moveClip(idx, -1) }, icon('left')),
-          h('button', { class: 'btn icon', title: 'Déplacer après', disabled: idx === this.project.show.clips.length - 1, onclick: () => this.moveClip(idx, 1) }, icon('right')),
+          h('button', { class: 'btn icon', title: 'Déplacer avant', disabled: idx === 0, onclick: () => this.moveClip(clip.id, -1) }, icon('left')),
+          h('button', { class: 'btn icon', title: 'Déplacer après', disabled: idx === list.length - 1, onclick: () => this.moveClip(clip.id, 1) }, icon('right')),
           h('button', { class: 'btn icon', title: 'Dupliquer', onclick: () => this.duplicateClip(clip.id) }, icon('copy')),
           h('button', { class: 'btn icon danger', title: 'Supprimer (Suppr)', onclick: () => this.deleteClip(clip.id) }, icon('trash')),
         ),
       ),
       h('p', { class: 'muted small' }, e.description),
+      h('p', { class: 'muted small kf-help' }, `◆ = image clé à la position de lecture (${Math.round(prog * 100)} % du tableau) : le réglage évoluera dans le temps.`),
       fxSel,
       slider({ label: 'Durée (s)', min: 1, max: 60, step: 0.5, value: clip.duration, onInput: (x) => {
         clip.duration = x;
@@ -793,6 +928,9 @@ export class App {
       this.quad = [[0.08, 0.08], [0.92, 0.08], [0.92, 0.92], [0.08, 0.92]];
       this.project = emptyProject();
       this.project.name = file.name.replace(/\.[^.]+$/, '');
+      this.mediaBlobs.clear();
+      this.mediaRuntime.clear();
+      this.history.reset(this.project);
       this.facade = null;
       this.aiDepth = null;
       this.aiDepthBlob = null;
@@ -817,6 +955,9 @@ export class App {
     this.aiDepth = null;
     this.aiDepthBlob = null;
     this.setFacade(t.image);
+    this.mediaBlobs.clear();
+    this.mediaRuntime.clear();
+    this.history.reset(this.project);
     this.selectedClip = null;
     this.time = 0;
     this.goto('spectacle');
@@ -897,44 +1038,212 @@ export class App {
     this.stage.redraw();
   }
 
-  addClip(effect: string) {
+  // ── pistes
+  trackList(tid: string): Clip[] {
+    if (tid === MAIN_TRACK) return this.project.show.clips;
+    return this.project.show.layers?.find((l) => l.id === tid)?.clips ?? this.project.show.clips;
+  }
+
+  findClip(id: string | null): { clip: Clip; list: Clip[]; track: string; start: number } | null {
+    if (!id) return null;
+    const tracks: [string, Clip[]][] = [[MAIN_TRACK, this.project.show.clips], ...(this.project.show.layers ?? []).map((l) => [l.id, l.clips] as [string, Clip[]])];
+    for (const [track, list] of tracks) {
+      const tm = trackTimings(list).find((t) => t.clip.id === id);
+      if (tm) return { clip: tm.clip, list, track, start: tm.start };
+    }
+    return null;
+  }
+
+  addLayer() {
+    const layers = (this.project.show.layers ??= []);
+    const l: Layer = { id: uid('p'), name: `Piste ${layers.length + 2}`, clips: [], opacity: 1, blend: 'add' };
+    // la nouvelle piste commence par une pause jusqu'à la position de lecture
+    if (this.time > 0.5) l.clips.push({ ...newClip('vide', Math.round(this.time * 10) / 10), transition: 'cut', transitionDuration: 0 });
+    layers.push(l);
+    this.timeline.activeTrack = l.id;
+    this.showTab = 'tableaux';
+    this.refreshShowUI();
+    this.scheduleSave();
+    toast(`${l.name} ajoutée : choisissez un tableau, il s’ajoutera sur cette piste.`, 'ok', 4500);
+  }
+
+  deleteLayer(id: string) {
+    this.project.show.layers = (this.project.show.layers ?? []).filter((l) => l.id !== id);
+    if (this.timeline.activeTrack === id) this.timeline.activeTrack = MAIN_TRACK;
+    this.selectedClip = null;
+    this.refreshShowUI();
+    this.scheduleSave();
+  }
+
+  addClip(effect: string, params?: Record<string, unknown>, keys?: Clip['keys']) {
     const c = newClip(effect);
-    const clips = this.project.show.clips;
+    if (params) Object.assign(c.params, structuredClone(params));
+    if (keys) c.keys = structuredClone(keys);
+    const sel = this.findClip(this.selectedClip);
+    const clips = sel ? sel.list : this.trackList(this.timeline.activeTrack);
     const i = clips.findIndex((x) => x.id === this.selectedClip);
     clips.splice(i >= 0 ? i + 1 : clips.length, 0, c);
     this.selectedClip = c.id;
-    const start = computeTimings(this.project.show).find((t) => t.clip.id === c.id)!.start;
-    this.seek(start + 0.01);
+    this.seek((this.findClip(c.id)?.start ?? 0) + 0.01);
     this.refreshShowUI();
     this.scheduleSave();
     toast(`« ${EFFECT_MAP.get(effect)!.name} » ajouté.`, 'ok', 2000);
   }
 
   deleteClip(id: string) {
-    this.project.show.clips = this.project.show.clips.filter((c) => c.id !== id);
+    const f = this.findClip(id);
+    if (!f) return;
+    f.list.splice(f.list.indexOf(f.clip), 1);
     this.selectedClip = null;
     this.refreshShowUI();
     this.scheduleSave();
   }
 
   duplicateClip(id: string) {
-    const clips = this.project.show.clips;
-    const i = clips.findIndex((c) => c.id === id);
-    if (i < 0) return;
-    const copy = { ...clips[i], id: uid('c'), params: { ...clips[i].params } };
-    clips.splice(i + 1, 0, copy);
+    const f = this.findClip(id);
+    if (!f) return;
+    const copy: Clip = { ...structuredClone(f.clip), id: uid('c') };
+    f.list.splice(f.list.indexOf(f.clip) + 1, 0, copy);
     this.selectedClip = copy.id;
     this.refreshShowUI();
     this.scheduleSave();
   }
 
-  moveClip(i: number, dir: number) {
-    const clips = this.project.show.clips;
+  moveClip(id: string, dir: number) {
+    const f = this.findClip(id);
+    if (!f) return;
+    const clips = f.list;
+    const i = clips.indexOf(f.clip);
     const j = i + dir;
     if (j < 0 || j >= clips.length) return;
     [clips[i], clips[j]] = [clips[j], clips[i]];
     this.refreshShowUI();
     this.scheduleSave();
+  }
+
+  // ── annuler / rétablir
+  undo() {
+    const st = this.history.undo(this.project);
+    if (st) this.applySnapshot(st);
+  }
+
+  redo() {
+    const st = this.history.redo();
+    if (st) this.applySnapshot(st);
+  }
+
+  private applySnapshot(st: Partial<Project>) {
+    const zonesChanged = JSON.stringify(st.zones) !== JSON.stringify(this.project.zones);
+    Object.assign(this.project, st);
+    this.zoneEditor.zones = this.project.zones;
+    if (this.zoneEditor.selected && !this.project.zones.some((z) => z.id === this.zoneEditor.selected)) this.zoneEditor.selected = null;
+    if (this.selectedClip && !this.findClip(this.selectedClip)) this.selectedClip = null;
+    if (zonesChanged) this.rebuildNow();
+    this.timeline.setData(this.project.show, this.audio?.analysis ?? null, this.selectedClip);
+    this.renderSide();
+    this.stage.redraw();
+    this.dirty = true;
+    this.scheduleSave(false);
+  }
+
+  private undoBtns: { u: HTMLButtonElement; r: HTMLButtonElement } | null = null;
+  private renderUndo() {
+    if (!this.undoBtns) return;
+    this.undoBtns.u.disabled = !this.history.canUndo();
+    this.undoBtns.r.disabled = !this.history.canRedo();
+  }
+
+  // ── médias importés
+  async importMedia(): Promise<string | null> {
+    const f = await pickFile('image/*,video/*');
+    if (!f) return null;
+    const kind: MediaItem['kind'] = f.type.startsWith('video/') ? 'video' : 'image';
+    const item: MediaItem = { id: uid('m'), name: f.name, kind };
+    (this.project.media ??= []).push(item);
+    this.mediaBlobs.set(item.id, f);
+    await this.prepareMedia(item);
+    this.scheduleSave();
+    toast(`${kind === 'video' ? 'Vidéo' : 'Image'} « ${f.name} » ajoutée à la médiathèque.`, 'ok');
+    return item.id;
+  }
+
+  private async prepareMedia(item: MediaItem) {
+    const blob = this.mediaBlobs.get(item.id);
+    if (!blob) return;
+    if (item.kind === 'image') {
+      this.mediaRuntime.set(item.id, { image: await createImageBitmap(blob) });
+    } else {
+      const v = document.createElement('video');
+      v.src = URL.createObjectURL(blob);
+      v.muted = true;
+      v.loop = true;
+      v.playsInline = true;
+      v.preload = 'auto';
+      await new Promise<void>((res) => {
+        v.onloadeddata = () => res();
+        v.onerror = () => res();
+        setTimeout(res, 8000);
+      });
+      this.mediaRuntime.set(item.id, { video: v });
+    }
+  }
+
+  removeMedia(id: string) {
+    this.project.media = (this.project.media ?? []).filter((m) => m.id !== id);
+    const r = this.mediaRuntime.get(id);
+    r?.video?.pause();
+    this.mediaRuntime.delete(id);
+    this.mediaBlobs.delete(id);
+    this.renderer.forgetMedia(id);
+    this.renderSide();
+    this.dirty = true;
+    this.scheduleSave();
+  }
+
+  /** Source d'image pour le moteur : image fixe, ou vidéo calée sur le temps du tableau. */
+  private mediaSource(id: string, _clip: Clip, local: number) {
+    const r = this.mediaRuntime.get(id);
+    if (!r) return null;
+    if (r.image) return { source: r.image as TexImageSource, dynamic: false };
+    const v = r.video;
+    if (!v || v.readyState < 2) return null;
+    r.used = this.frameNo;
+    const dur = v.duration || 1;
+    const target = ((Math.max(0, local) % dur) + dur) % dur;
+    if (this.playing && !this.exportingFrames) {
+      if (v.paused) v.play().catch(() => undefined);
+      if (Math.abs(v.currentTime - target) > 0.35) v.currentTime = target;
+    } else {
+      if (!v.paused) v.pause();
+      if (!this.exportingFrames && Math.abs(v.currentTime - target) > 0.04) v.currentTime = target;
+    }
+    return { source: v as TexImageSource, dynamic: true };
+  }
+
+  private exportingFrames = false;
+
+  /** Cale précisément les vidéos actives avant le rendu d'une image d'export. */
+  private async syncVideosAt(t: number, show = this.project.show) {
+    const waits: Promise<void>[] = [];
+    const tracks = [show.clips, ...(show.layers ?? []).map((l) => l.clips)];
+    for (const list of tracks) {
+      for (const tm of trackTimings(list)) {
+        if (tm.clip.effect !== 'media') continue;
+        if (t < tm.start - 3 || t > tm.end + 3) continue;
+        const v = this.mediaRuntime.get(String(tm.clip.params.media))?.video;
+        if (!v) continue;
+        const dur = v.duration || 1;
+        const target = ((Math.max(0, t - tm.start) % dur) + dur) % dur;
+        if (Math.abs(v.currentTime - target) < 0.005) continue;
+        waits.push(new Promise((res) => {
+          const done = () => res();
+          v.addEventListener('seeked', done, { once: true });
+          setTimeout(done, 1500);
+          v.currentTime = target;
+        }));
+      }
+    }
+    await Promise.all(waits);
   }
 
   snapToMusic() {
@@ -1020,7 +1329,10 @@ export class App {
         this.renderer.render(this.project.show, this.time, audioFrameAt(this.time, this.audio?.analysis ?? null, this.project.show.bpm), mode);
       }
       this.dirty = false;
+      this.frameNo++;
+      for (const r of this.mediaRuntime.values()) if (r.video && !r.video.paused && (r.used ?? -1) < this.frameNo - 2) r.video.pause();
     }
+    if (!this.playing && [...this.mediaRuntime.values()].some((r) => r.video && r.video.seeking)) this.dirty = true;
     requestAnimationFrame((t) => this.loop(t));
   }
 
@@ -1030,7 +1342,7 @@ export class App {
   }
 
   play() {
-    if (!this.scene || !this.project.show.clips.length) return;
+    if (!this.scene || showDuration(this.project.show) <= 0) return;
     if (this.time >= showDuration(this.project.show) - 0.05) this.time = 0;
     this.playing = true;
     this.startAudio();
@@ -1108,7 +1420,12 @@ export class App {
     const t0 = performance.now();
     const base = (this.project.name || 'lumirock').replace(/[^\w\d-]+/g, '_');
     try {
-      const common = { scene: this.scene, analysis: this.audio?.analysis ?? null, width: W, height: H, fps: o.fps, quality: o.quality, mode: o.mode, onProgress, signal: ctrl.signal };
+      this.exportingFrames = true;
+      const common = {
+        scene: this.scene, analysis: this.audio?.analysis ?? null, width: W, height: H, fps: o.fps, quality: o.quality, mode: o.mode, onProgress, signal: ctrl.signal,
+        mediaProvider: (id: string, clip: Clip, local: number) => this.mediaSource(id, clip, local),
+        prepareFrame: (t: number, show: typeof this.project.show) => this.syncVideosAt(t, show),
+      };
       if (o.content === 'clips') {
         const files: Record<string, Uint8Array> = {};
         await exportClips({ ...common, show: this.project.show, withAudio: false }, async (name, blob) => {
@@ -1116,7 +1433,7 @@ export class App {
         });
         download(zipFiles(files), `${base}_tableaux_${W}x${H}.zip`);
       } else if (o.content === 'selected') {
-        const clip = this.project.show.clips.find((c) => c.id === this.selectedClip) ?? this.project.show.clips[0];
+        const clip = this.findClip(this.selectedClip)?.clip ?? this.project.show.clips[0];
         const show = { ...this.project.show, clips: [{ ...clip, transition: 'cut' }] };
         const { blob } = await exportVideo({ ...common, show, t0: 0, t1: clip.duration, withAudio: false, fade: false });
         download(blob, `${base}_${clip.effect}_${W}x${H}.mp4`);
@@ -1135,6 +1452,7 @@ export class App {
       lbl.textContent = '';
       bar.style.width = '0%';
     } finally {
+      this.exportingFrames = false;
       this.exporting = null;
       if (btn && btnLabel) btn.innerHTML = btnLabel;
     }
@@ -1181,10 +1499,12 @@ export class App {
       facade: this.facadeBlob,
       aiDepth: this.aiDepthBlob,
       audio: this.audio ? { blob: this.audio.blob, name: this.audio.name } : null,
+      media: (this.project.media ?? []).filter((m) => this.mediaBlobs.has(m.id)).map((m) => ({ id: m.id, blob: this.mediaBlobs.get(m.id)! })),
     };
   }
 
-  scheduleSave() {
+  scheduleSave(commitHistory = true) {
+    if (commitHistory) this.history.commit(this.project);
     clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(async () => {
       if (!this.facade) return;
@@ -1240,6 +1560,12 @@ export class App {
         this.rebuildNow();
       }
       if (s.audio) await this.loadAudio(s.audio.blob, s.audio.name);
+      else this.audio = null;
+      this.mediaBlobs.clear();
+      this.mediaRuntime.clear();
+      for (const m of s.media ?? []) this.mediaBlobs.set(m.id, m.blob);
+      for (const item of this.project.media ?? []) await this.prepareMedia(item);
+      this.history.reset(this.project);
       this.selectedClip = null;
       this.time = 0;
       this.goto(this.facade ? 'spectacle' : 'source');
@@ -1263,6 +1589,9 @@ export class App {
     this.aiDepthBlob = null;
     this.selectedClip = null;
     this.time = 0;
+    this.mediaBlobs.clear();
+    this.mediaRuntime.clear();
+    this.history.reset(this.project);
     this.goto('source');
   }
 
@@ -1274,6 +1603,16 @@ export class App {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
         this.saveProjectFile();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        this.redo();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        this.undo();
         return;
       }
       if (this.step === 'spectacle' || this.step === 'export') {

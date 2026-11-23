@@ -28,6 +28,8 @@ uniform float uEnergy;
 uniform float uRelief;
 uniform float uSeed;
 uniform float uZoneCount;
+uniform float uQuality;    // 0 aperçu, 1 qualité finale
+uniform float uAuxAspect;  // proportions du média importé
 uniform vec3 uColA;
 uniform vec3 uColB;
 uniform float uIntensity;
@@ -110,9 +112,12 @@ float shadowAt(vec2 uv, vec3 L) {
   vec2 dir = normalize(L.xy + 1e-5) / vec2(uAspect, 1.0);
   float slope = L.z / max(length(L.xy), 1e-3);
   float sh = 1.0;
-  float stepLen = 0.004;
-  for (int i = 1; i <= 28; i++) {
-    float d = float(i) * stepLen * (1.0 + float(i) * 0.08);
+  float n = 28.0 + uQuality * 28.0;
+  float stepLen = 0.004 * 28.0 / n;
+  for (int i = 1; i <= 56; i++) {
+    if (float(i) > n) break;
+    float fi = float(i) * 28.0 / n;
+    float d = float(i) * stepLen * (1.0 + fi * 0.08);
     vec2 p = uv + dir * d;
     if (p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) break;
     float h = depthAt(p) * uRelief;
