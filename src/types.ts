@@ -45,7 +45,7 @@ export interface Clip {
 export interface Show {
   clips: Clip[];
   bpm: number;
-  master: { brightness: number; bloom: number; relief: number; vignette: number };
+  master: { brightness: number; bloom: number; relief: number; vignette: number; ambient?: number };
 }
 
 export interface Project {

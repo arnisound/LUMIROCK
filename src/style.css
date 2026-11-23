@@ -237,3 +237,9 @@ input[type='range']::-moz-range-thumb { width: 15px; height: 15px; border: 0; bo
   header.top { gap: 8px; padding: 0 10px; overflow-x: auto; }
   .logo-text { display: none; }
 }
+
+details.card.adv > summary { cursor: pointer; list-style: none; margin-bottom: 0; }
+details.card.adv > summary::-webkit-details-marker { display: none; }
+details.card.adv > summary::after { content: '▸'; margin-left: auto; color: var(--muted); transition: transform 0.15s; }
+details.card.adv[open] > summary { margin-bottom: 10px; }
+details.card.adv[open] > summary::after { transform: rotate(90deg); }

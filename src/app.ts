@@ -3,7 +3,7 @@ import { buildScene, MAX_WORK } from './analysis/maps';
 import { fitToWork, rectify } from './analysis/rectify';
 import { detectOpenings } from './analysis/detect';
 import { AudioAnalysis, analyseAudio, audioFrameAt, decodeAudio } from './audio';
-import { CATEGORIES, CATEGORY_COLORS, EFFECTS, EFFECT_MAP, TRANSITIONS } from './effects/library';
+import { CATEGORIES, CATEGORY_COLORS, COMMON_PARAMS, EFFECTS, EFFECT_MAP, ParamDef, TRANSITIONS } from './effects/library';
 import { Renderer, SceneMaps, ViewMode, computeTimings, showDuration } from './gl/renderer';
 import { SCENARIOS, compose, defaultShow, newClip } from './scenarios';
 import { TEMPLATES } from './templates';
@@ -558,7 +558,7 @@ export class App {
       this.refreshShowUI();
       changed();
     } });
-    const controls = e.params.map((p) => {
+    const control = (p: ParamDef) => {
       const v = clip.params[p.key] ?? p.default;
       if (p.type === 'range') return slider({ label: p.label, min: p.min!, max: p.max!, step: p.step!, value: Number(v), onInput: (x) => {
         clip.params[p.key] = x;
@@ -586,7 +586,10 @@ export class App {
         changed();
       });
       return h('label', { class: 'field' }, h('span', { class: 'lbl' }, p.label), ta);
-    });
+    };
+    const controls = e.params.map(control);
+    const advanced = COMMON_PARAMS.map(control);
+    const advOpen = (clip.params._target ?? 0) !== 0 || Number(clip.params._react ?? 0) > 0 || Number(clip.params._mirror ?? 0) > 0 || Number(clip.params._hue ?? 0) !== 0 || Number(clip.params._sat ?? 1) !== 1;
     add(b, 
       h('div', { class: 'clip-head', style: `--c:${CATEGORY_COLORS[e.category]}` },
         h('div', {}, h('small', {}, `Tableau ${idx + 1} · ${e.category}`), h('b', {}, e.name)),
@@ -619,6 +622,11 @@ export class App {
           this.timeline.render();
           changed();
         } }),
+      ),
+      h('details', { class: 'card adv', open: advOpen },
+        h('summary', { class: 'card-title' }, 'Options avancées'),
+        h('p', { class: 'muted small' }, 'Limiter le tableau à certains calques, le faire réagir à la musique, le rendre symétrique ou changer ses couleurs.'),
+        ...advanced,
       ),
     );
   }
@@ -687,6 +695,7 @@ export class App {
       slider({ label: 'Halo lumineux (bloom)', min: 0, max: 2, step: 0.01, value: m.bloom, onInput: (v) => ((m.bloom = v), ch()) }),
       slider({ label: 'Profondeur des reliefs et ombres', min: 0, max: 1.5, step: 0.01, value: m.relief, onInput: (v) => ((m.relief = v), ch()) }),
       slider({ label: 'Vignettage', min: 0, max: 1, step: 0.01, value: m.vignette, onInput: (v) => ((m.vignette = v), ch()) }),
+      slider({ label: 'Lumière ambiante (simulation de nuit)', min: 0, max: 0.4, step: 0.01, value: m.ambient ?? 0.06, onInput: (v) => ((m.ambient = v), ch()) }),
       h('p', { class: 'muted small' }, 'Astuce : sur une façade claire, baissez la luminosité ; sur une pierre sombre, augmentez-la.'),
       h('button', { class: 'btn ghost wide', onclick: () => this.fullscreen() }, icon('expand'), 'Plein écran (projeter depuis le navigateur)'),
     );

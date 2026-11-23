@@ -130,9 +130,39 @@ float diffuseAt(vec2 uv, vec3 L) {
 `;
 
 export const EFFECT_FOOTER = /* glsl */ `
+// ── options communes à tous les tableaux
+uniform float uTarget;    // calques ciblés (0 = toute la façade)
+uniform float uTargetBg;  // hors cible : 0 noir, 1 lumière douce
+uniform float uReact;     // réaction à la musique
+uniform float uMirror;    // 0 aucun, 1 gauche -> droite, 2 droite -> gauche
+uniform float uHue;       // rotation de teinte (tours)
+uniform float uSat;       // saturation
+vec3 hueShift(vec3 c, float a) {
+  const vec3 k = vec3(0.57735);
+  float ca = cos(a);
+  return c * ca + cross(k, c) * sin(a) + k * dot(k, c) * (1.0 - ca);
+}
+float targetMask(vec2 uv) {
+  int t = int(uTarget + 0.5);
+  if (t == 0) return 1.0;
+  int id = zoneId(uv);
+  int ty = zoneTypeAt(uv);
+  if (t == 20) return (id > 0 && (isOpening(ty) || ty == T_HORLOGE)) ? 1.0 : 0.0;
+  if (t == 21) return (id == 0 || ty == T_MUR) ? 1.0 : 0.0;
+  if (t == 22) return id > 0 ? 1.0 : 0.0;
+  return (id > 0 && ty == t) ? 1.0 : 0.0;
+}
 void main() {
-  vec3 c = effect(vUv);
-  c = max(c, 0.0) * uIntensity;
+  vec2 uv = vUv;
+  if (uMirror > 0.5 && uMirror < 1.5 && uv.x > 0.5) uv.x = 1.0 - uv.x;
+  if (uMirror > 1.5 && uv.x < 0.5) uv.x = 1.0 - uv.x;
+  vec3 c = max(effect(uv), 0.0) * uIntensity;
+  c *= 1.0 + uReact * (uBeat * 0.8 + (uEnergy - 0.5) * 0.6);
+  if (abs(uHue) > 0.001) c = max(hueShift(c, uHue * TAU), 0.0);
+  c = max(mix(vec3(lum(c)), c, uSat), 0.0);
+  float tm = targetMask(vUv);
+  vec3 bg = vec3(1.0, 0.96, 0.9) * uTargetBg * 0.3 * (0.6 + 0.4 * diffuseAt(vUv, normalize(vec3(-0.3, 0.6, 0.8))));
+  c = mix(bg, c, tm);
   outColor = vec4(c * maskAt(vUv), 1.0);
 }
 `;

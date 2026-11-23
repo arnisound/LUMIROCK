@@ -1,6 +1,6 @@
 import { EFFECT_HEADER, EFFECT_FOOTER } from './common';
 import { FULLSCREEN_VS, Program, Target, createTarget, deleteTarget } from './glutil';
-import { EFFECT_MAP, EffectDef, TRANSITIONS } from '../effects/library';
+import { COMMON_PARAMS, EFFECT_MAP, EffectDef, TRANSITIONS } from '../effects/library';
 import type { Clip, Show } from '../types';
 
 export interface SceneMaps {
@@ -57,6 +57,32 @@ void main() {
   } else if (uType == 6) {
     float f = 1.0 - abs(m * 2.0 - 1.0);
     c = (m < 0.5 ? a : b) + vec3(f * f * 2.5);
+  } else if (uType == 8) {
+    // iris : un cercle s'ouvre depuis le centre
+    float r = length(asp(uv) - asp(vec2(0.5)));
+    float R = m * 0.8 * max(uAspect, 1.0) * 1.2;
+    float w = sstep(R - 0.015, R + 0.015, r);
+    c = mix(b, a, w) + vec3(1.0, 0.9, 0.7) * exp(-abs(r - R) * 80.0) * sin(m * PI) * 1.4;
+  } else if (uType == 9) {
+    // volets : bandes verticales qui pivotent
+    float f = fract(uv.x * 9.0);
+    float k = sstep(f - 0.05, f + 0.05, m * 1.1 + (hash11(floor(uv.x * 9.0)) - 0.5) * 0.1);
+    c = mix(a, b, k) + vec3(1.0) * exp(-abs(f - m) * 60.0) * sin(m * PI) * 0.6;
+  } else if (uType == 10) {
+    // pixels : l'image se pixellise puis se reconstitue
+    float k = 1.0 - abs(m * 2.0 - 1.0);
+    float n = mix(400.0, 14.0, k);
+    vec2 g = vec2(n * uAspect, n);
+    vec2 q = (floor(uv * g) + 0.5) / g;
+    c = m < 0.5 ? texture(uA, q).rgb : texture(uB, q).rgb;
+  } else if (uType == 11) {
+    // tourbillon
+    float k = 1.0 - abs(m * 2.0 - 1.0);
+    vec2 d = asp(uv) - asp(vec2(0.5));
+    float ang = k * 6.0 * exp(-length(d) * 1.5);
+    vec2 rd = mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * d;
+    vec2 q = vec2(rd.x / uAspect, rd.y) + 0.5;
+    c = mix(texture(uA, q).rgb, texture(uB, q).rgb, sstep(0.35, 0.65, m));
   } else c = m < 0.5 ? a : b;
   outColor = vec4(c, 1.0);
 }`;
@@ -314,7 +340,8 @@ export class Renderer {
     p.f('uRelief', show.master.relief).f('uSeed', seedFrom(clip.id)).f('uZoneCount', s.zoneCount);
     // valeurs par défaut des emplacements
     p.f('uIntensity', 1).f('uSpeed', 1).v3('uColA', [1, 1, 1]).v3('uColB', [1, 1, 1]).f('uParamA', 0.5).f('uParamB', 0.5).f('uParamC', 0);
-    for (const def of effect.params) {
+    p.f('uTarget', 0).f('uTargetBg', 0).f('uReact', 0).f('uMirror', 0).f('uHue', 0).f('uSat', 1);
+    for (const def of [...effect.params, ...COMMON_PARAMS]) {
       const v = clip.params[def.key] ?? def.default;
       if (def.slot === 'aux') continue;
       if (def.type === 'color') p.v3(def.slot, hexToRgb(String(v)));
@@ -387,7 +414,7 @@ export class Renderer {
     const o = this.output.use();
     o.tex('uScene', 0, sceneTarget.tex).tex('uBloomA', 1, T.q2.tex).tex('uBloomB', 2, T.e2.tex).tex('uAlbedo', 3, this.tex.albedo).tex('uZones', 4, this.tex.zones);
     o.i('uMode', mode === 'projection' ? 0 : mode === 'simulation' ? 1 : 2);
-    o.f('uBright', show.master.brightness).f('uBloom', show.master.bloom).f('uFade', fade).f('uVignette', show.master.vignette).f('uAmbient', 0.06);
+    o.f('uBright', show.master.brightness).f('uBloom', show.master.bloom).f('uFade', fade).f('uVignette', show.master.vignette).f('uAmbient', show.master.ambient ?? 0.06);
     this.draw(null);
   }
 

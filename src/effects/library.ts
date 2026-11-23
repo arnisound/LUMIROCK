@@ -3,7 +3,8 @@
 // la simulation de nuit calcule ensuite « façade × (ambiance + lumière projetée) ».
 
 export type ParamType = 'range' | 'color' | 'text' | 'select' | 'toggle';
-export type UniformSlot = 'uIntensity' | 'uSpeed' | 'uColA' | 'uColB' | 'uParamA' | 'uParamB' | 'uParamC' | 'aux';
+export type UniformSlot = 'uIntensity' | 'uSpeed' | 'uColA' | 'uColB' | 'uParamA' | 'uParamB' | 'uParamC' | 'aux'
+  | 'uTarget' | 'uTargetBg' | 'uReact' | 'uMirror' | 'uHue' | 'uSat';
 
 export interface ParamDef {
   key: string;
@@ -893,6 +894,275 @@ vec3 effect(vec2 uv) {
   return c;
 }`,
   },
+  // ─────────────────────────── NOUVEAUX TABLEAUX ───────────────────────────
+  {
+    id: 'lave', name: 'Coulée de lave', category: 'Nature', mood: 'fort', defaultDuration: 12,
+    description: 'La pierre se fend : des fissures de lave incandescente se propagent depuis le sol.',
+    tags: ['halloween', 'patrimoine', 'national'],
+    params: [I(), S(), CA('#ff4a00', 'Lueur'), R('plates', 'Taille des plaques', 'uParamA', 0.4), R('width', 'Largeur des fissures', 'uParamB', 0.5)],
+    glsl: `
+vec3 effect(vec2 uv) {
+  float t = uT * uSpeed;
+  vec3 v = voronoi(asp(uv) * (14.0 - uParamA * 9.0));
+  float spread = sstep(0.0, 0.6, uP) * (1.0 - sstep(0.85, 1.0, uP) * 0.7);
+  float reach = fbm(asp(uv) * 3.0) * 0.6 + uv.y * 0.7;
+  float on = sstep(reach - 0.08, reach, spread * 1.6);
+  float crack = sstep(0.03 + 0.05 * uParamB, 0.0, v.y) * on;
+  float flow = fbm(asp(uv) * 8.0 + vec2(0.0, -t * 0.6));
+  vec3 hot = mix(vec3(1.0, 0.2, 0.0), vec3(1.0, 0.85, 0.35), flow);
+  float pulse = 0.8 + 0.2 * sin(t * 2.0 + v.z * 10.0) + uBeat * 0.3;
+  vec3 rock = vec3(0.1, 0.06, 0.05) * (0.5 + lum(albedo(uv))) * on + albedo(uv) * 0.3 * (1.0 - on);
+  vec3 glow = uColA * sstep(0.22, 0.0, v.y) * on * 0.45;
+  return rock + hot * crack * 2.0 * pulse + glow;
+}`,
+  },
+  {
+    id: 'brume', name: 'Brume mystérieuse', category: 'Nature', mood: 'calme', defaultDuration: 14,
+    description: 'Un brouillard lumineux glisse sur la façade, éclairé par une lune qui tourne.',
+    tags: ['halloween', 'patrimoine', 'saisons'],
+    params: [I(), S(), CA('#b9c8ff', 'Brume'), CB('#4c5f9e', 'Clair de lune'), R('low', 'Brume au ras du sol', 'uParamA', 0.6)],
+    glsl: `
+vec3 effect(vec2 uv) {
+  float t = uT * uSpeed * 0.15;
+  vec2 p = asp(uv) * 2.0;
+  float f = fbm(p + vec2(t, 0.0) + fbm(p * 1.5 - vec2(0.0, t)) * 1.5);
+  float dens = sstep(0.35, 0.85, f) * (1.0 - uv.y * uParamA);
+  vec3 L = normalize(vec3(sin(uT * 0.3) * 0.7, 0.5, 0.6));
+  vec3 lit = uColB * (0.08 + 0.55 * diffuseAt(uv, L) * shadowAt(uv, L));
+  return lit + uColA * dens * 0.9 * sstep(0.0, 0.15, uP);
+}`,
+  },
+  {
+    id: 'petales', name: 'Pluie de pétales', category: 'Nature', mood: 'calme', defaultDuration: 12,
+    description: 'Des pétales tourbillonnent et tombent doucement devant la façade éclairée.',
+    tags: ['mariage', 'saisons'],
+    params: [I(), S(), CA('#ff7fb0', 'Pétales'), CB('#ffd9a0', 'Lumière'), R('density', 'Densité', 'uParamA', 0.6)],
+    glsl: `
+float petal(vec2 uv, float scale, float seed) {
+  vec2 p = asp(uv) * scale + vec2(sin(uT * 0.7 + seed + uv.y * 4.0) * 0.5, uT * uSpeed * (0.5 + seed * 0.08));
+  vec2 cell = floor(p);
+  vec2 f = fract(p) - 0.5 - (hash22(cell + seed) - 0.5) * 0.5;
+  float on = step(1.0 - uParamA * 0.5, hash21(cell + seed * 7.0));
+  float a = uT * (hash21(cell) - 0.5) * 6.0 + hash21(cell) * 6.0;
+  f = mat2(cos(a), -sin(a), sin(a), cos(a)) * f;
+  return on * sstep(0.17, 0.12, length(f * vec2(1.0, 2.2)));
+}
+vec3 effect(vec2 uv) {
+  vec3 base = uColB * (0.15 + 0.35 * diffuseAt(uv, normalize(vec3(-0.4, 0.6, 0.8))));
+  float pt = petal(uv, 22.0, 1.0) * 0.7 + petal(uv, 13.0, 5.0) + petal(uv, 8.0, 9.0) * 1.2;
+  return base + uColA * pt * 1.3;
+}`,
+  },
+  {
+    id: 'sable', name: 'Désintégration', category: 'Architecture', mood: 'fort', defaultDuration: 12,
+    description: 'La façade se désagrège en grains emportés par le vent, puis se reconstitue.',
+    tags: ['halloween', 'patrimoine', 'national'],
+    params: [I(), CA('#ffb46b', 'Lisière'), R('speed2', 'Vitesse des grains', 'uParamA', 0.5), R('wind', 'Vent vers le haut', 'uParamB', 0.3)],
+    glsl: `
+float tdis(vec2 o) { return 0.08 + (fbm(asp(o) * 4.0) * 0.55 + o.x * 0.45) * 0.75; }
+vec3 effect(vec2 uv) {
+  float t = (uP < 0.5 ? uP * 2.0 : (1.0 - uP) * 2.0) * 1.15;
+  float sp = 0.5 + uParamA;
+  float td = tdis(uv);
+  vec3 c = t < td ? albedo(uv) * 1.5 : vec3(0.0);
+  c += uColA * sstep(0.025, 0.0, abs(t - td)) * 1.6;
+  vec2 w = normalize(vec2(1.0, 0.2 + uParamB));
+  for (int k = 1; k <= 14; k++) {
+    float s = float(k) * 0.022;
+    vec2 o = uv - w * s * vec2(1.0 / uAspect, 1.0);
+    float age = (t - tdis(o)) * sp;
+    if (age > 0.0 && abs(age - s) < 0.02) {
+      float gr = step(0.55, hash21(floor(o * uZoneRes * 0.5)));
+      c += albedo(o) * 1.4 * gr * max(0.0, 1.0 - s * 2.2);
+    }
+  }
+  return c;
+}`,
+  },
+  {
+    id: 'aquarelle', name: 'Aquarelle', category: 'Matières', mood: 'calme', defaultDuration: 12,
+    description: 'La façade se peint à l’aquarelle : les pigments se diffusent sur la pierre.',
+    tags: ['mariage', 'saisons', 'patrimoine'],
+    params: [I(), CA('#3f8cff', 'Pigment 1'), CB('#ff7a59', 'Pigment 2'), R('rainbow', 'Couleurs libres', 'uParamA', 0.3)],
+    glsl: `
+vec3 effect(vec2 uv) {
+  vec2 p = asp(uv);
+  float n = fbm(p * 3.0);
+  float front = uP * 1.4 - 0.1;
+  float reveal = sstep(n - 0.08, n + 0.04, front);
+  float edge = sstep(0.05, 0.0, abs(front - n));
+  vec3 pig = mix(uColA, uColB, sstep(0.3, 0.7, fbm(p * 2.0 + 7.0)));
+  pig = mix(pig, hsv(fbm(p * 1.5 + uT * 0.02), 0.6, 1.0), uParamA);
+  float paper = 0.85 + 0.15 * fbm(p * 9.0 + 3.0);
+  vec3 c = pig * (0.4 + 0.9 * lum(albedo(uv))) * paper * reveal;
+  c += pig * edge * 0.7;
+  c += vec3(1.0) * edgeImg(uv) * 0.3 * reveal;
+  return c;
+}`,
+  },
+  {
+    id: 'matrix', name: 'Pluie numérique', category: 'Graphique', mood: 'fort', defaultDuration: 10,
+    description: 'Des colonnes de signes lumineux ruissellent sur le monument, façon code informatique.',
+    tags: ['halloween', 'national'],
+    params: [I(), S(), CA('#3dff7a', 'Signes'), R('cols', 'Nombre de colonnes', 'uParamA', 0.4), R('lines', 'Contours visibles', 'uParamB', 0.5)],
+    glsl: `
+vec3 effect(vec2 uv) {
+  float cols = 30.0 + uParamA * 70.0;
+  vec2 g = vec2(cols, cols / uAspect * 1.5);
+  vec2 cell = floor(uv * g);
+  vec2 f = fract(uv * g);
+  float spd = (0.5 + hash11(cell.x) * 1.5) * uSpeed;
+  float head = fract(-uT * spd * 0.25 + hash11(cell.x * 7.3));
+  float d = uv.y - head;
+  if (d < 0.0) d += 1.0;
+  float trail = exp(-d * 6.0);
+  float seg = step(0.15, f.x) * step(f.x, 0.85) * step(0.1, f.y) * step(f.y, 0.9);
+  float pattern = step(0.45, hash21(floor(f * vec2(3.0, 5.0)) + cell * 1.7 + floor(uT * 5.0 + hash11(cell.y) * 9.0)));
+  float v = seg * pattern * trail;
+  float headGlow = exp(-d * 90.0) * seg * pattern;
+  vec3 c = uColA * v * 1.4 + vec3(0.85, 1.0, 0.9) * headGlow * 1.6;
+  c += uColA * 0.05 * lum(albedo(uv)) + uColA * edgeZone(uv) * 0.3 * uParamB;
+  return c * sstep(0.0, 0.08, uP);
+}`,
+  },
+  {
+    id: 'onde', name: 'Onde de choc', category: 'Graphique', mood: 'moyen', defaultDuration: 10,
+    description: 'Des ondes circulaires se propagent et font vibrer la pierre, plus fort sur les temps.',
+    tags: ['national', 'mariage', 'halloween'],
+    params: [I(), S(), CA('#5ec8ff', 'Couleur 1'), CB('#ff5ec4', 'Couleur 2'), R('center', 'Hauteur du centre', 'uParamA', 0.4), R('beat', 'Ondes sur le rythme', 'uParamB', 0.7)],
+    glsl: `
+vec3 effect(vec2 uv) {
+  vec2 ctr = vec2(0.5, 0.2 + uParamA * 0.6);
+  vec2 d = asp(uv) - asp(ctr);
+  float r = length(d);
+  float t = uT * uSpeed;
+  float wave = 0.0;
+  vec2 disp = vec2(0.0);
+  for (int i = 0; i < 4; i++) {
+    float ph = fract(t * 0.35 + float(i) * 0.25);
+    float R = ph * 1.6;
+    float w = exp(-pow((r - R) * 14.0, 2.0)) * (1.0 - ph);
+    wave += w;
+    disp += normalize(d + 1e-5) * w * 0.012;
+  }
+  wave += uBeat * exp(-pow((r - uBeatPhase * 1.2) * 12.0, 2.0)) * uParamB;
+  vec2 su = uv - disp / vec2(uAspect, 1.0);
+  vec3 base = albedo(su) * (0.35 + 0.5 * diffuseAt(su, normalize(vec3(-0.3, 0.6, 0.8))));
+  return base * 0.55 + mix(uColA, uColB, 0.5 + 0.5 * sin(r * 10.0 - t)) * min(wave, 1.5) * 1.1;
+}`,
+  },
+  {
+    id: 'lasers', name: 'Show laser', category: 'Graphique', mood: 'fort', defaultDuration: 10,
+    description: 'Des faisceaux laser partent du sol et balaient la façade au rythme de la musique.',
+    tags: ['national', 'mariage', 'halloween'],
+    params: [I(), S(), CA('#00ffcc', 'Laser 1'), CB('#ff2bd6', 'Laser 2'), R('count', 'Nombre de lasers', 'uParamA', 0.5)],
+    glsl: `
+vec3 effect(vec2 uv) {
+  vec3 c = vec3(0.0);
+  vec2 p = asp(uv);
+  int N = 3 + int(uParamA * 5.0);
+  for (int i = 0; i < 8; i++) {
+    if (i >= N) break;
+    float fi = float(i);
+    vec2 o = vec2((fi + 0.5) / float(N) * uAspect, -0.05);
+    float ang = PI * 0.5 + sin(uT * uSpeed * (0.6 + fi * 0.13) + fi * 1.7) * 0.9;
+    vec2 dir = vec2(cos(ang), sin(ang));
+    vec2 rel = p - o;
+    float along = dot(rel, dir);
+    float perp = abs(rel.x * dir.y - rel.y * dir.x);
+    float beam = step(0.0, along) * (exp(-perp * 400.0) * 1.5 + exp(-perp * 60.0) * 0.25);
+    c += (mod(fi, 2.0) < 1.0 ? uColA : uColB) * beam * (0.6 + 0.6 * uBeat);
+  }
+  c += (uColA + uColB) * 0.05 * edgeZone(uv);
+  return c * sstep(0.0, 0.05, uP);
+}`,
+  },
+  {
+    id: 'pixels', name: 'Pixellisation', category: 'Graphique', mood: 'moyen', defaultDuration: 10,
+    description: 'Le monument se décompose en gros pixels colorés qui clignotent, puis se recompose.',
+    tags: ['national', 'mariage'],
+    params: [I(), CA('#ffcc00', 'Couleur 1'), CB('#00a8ff', 'Couleur 2'), R('size', 'Taille des pixels', 'uParamA', 0.5), R('color', 'Couleurs', 'uParamB', 0.6)],
+    glsl: `
+vec3 effect(vec2 uv) {
+  float k = 0.5 - 0.5 * cos(uP * TAU);
+  float n = mix(220.0, 8.0 + (1.0 - uParamA) * 22.0, k);
+  vec2 g = vec2(n * uAspect, n);
+  vec2 cell = floor(uv * g);
+  vec2 cuv = (cell + 0.5) / g;
+  vec3 a = albedo(cuv);
+  vec3 col = mix(a * 1.5, mix(uColA, uColB, hash21(cell + floor(uBeatIndex))) * (0.4 + lum(a)), k * uParamB);
+  vec2 f = fract(uv * g);
+  float grid = mix(1.0, sstep(0.0, 0.07, f.x) * sstep(0.0, 0.07, f.y), k);
+  return col * grid * (1.0 + uBeat * 0.3 * k);
+}`,
+  },
+  {
+    id: 'drapeau', name: 'Drapeau', category: 'Graphique', mood: 'moyen', defaultDuration: 10,
+    description: 'Un drapeau flotte sur toute la façade, sculpté par le relief de la pierre.',
+    tags: ['national'],
+    params: [I(), S(), CA('#1f3fd6', 'Bande 1'), CB('#e8262f', 'Bande 3'), SEL('dir', 'Bandes', 'uParamC', ['Verticales', 'Horizontales'], 0)],
+    glsl: `
+vec3 effect(vec2 uv) {
+  float t = uT * uSpeed;
+  vec2 q = uv;
+  q.x += sin(uv.y * 5.0 + t * 2.5) * 0.015;
+  q.y += sin(uv.x * 7.0 + t * 3.0) * 0.012;
+  float x = uParamC < 0.5 ? q.x : 1.0 - q.y;
+  vec3 col = x < 1.0 / 3.0 ? uColA : x < 2.0 / 3.0 ? vec3(1.0) : uColB;
+  float shade = 0.7 + 0.3 * sin(uv.x * 9.0 - t * 2.5 + uv.y * 4.0);
+  float reveal = sstep(uv.x - 0.05, uv.x + 0.05, uP * 3.0);
+  return col * shade * (0.45 + 0.75 * lum(albedo(uv))) * reveal;
+}`,
+  },
+  {
+    id: 'cinema', name: 'Vieux film', category: 'Illusions', mood: 'calme', defaultDuration: 10,
+    description: 'La façade apparaît comme dans un film d’archive : sépia, grain, rayures et scintillement.',
+    tags: ['patrimoine', 'mariage'],
+    params: [I(), R('shake', 'Tremblement', 'uParamA', 0.5), R('vignette', 'Vignettage', 'uParamB', 0.6)],
+    glsl: `
+vec3 effect(vec2 uv) {
+  float fr = floor(uT * 18.0);
+  vec2 j = (vec2(hash11(fr), hash11(fr + 3.0)) - 0.5) * 0.006 * uParamA;
+  float l = lum(albedo(uv + j));
+  vec3 sep = vec3(l * 1.1, l * 0.95, l * 0.72);
+  float flick = 0.85 + 0.15 * hash11(fr * 1.7);
+  float grain = (hash21(floor(uv * uRes) + fr) - 0.5) * 0.22;
+  float sx = hash11(fr * 0.37);
+  float scratch = step(0.6, hash11(fr * 5.1)) * sstep(0.002, 0.0, abs(uv.x - sx));
+  vec2 d = uv - 0.5;
+  float vig = max(0.0, 1.0 - dot(d, d) * 2.2 * uParamB);
+  return (sep * 1.5 * flick + grain) * vig + vec3(0.9) * scratch * 0.6;
+}`,
+  },
+  {
+    id: 'etoiles', name: 'Constellations', category: 'Illusions', mood: 'calme', defaultDuration: 14,
+    description: 'La façade devient un ciel étoilé : les étoiles s’allument et se relient en constellations.',
+    tags: ['noel', 'mariage', 'saisons'],
+    params: [I(), S(), CA('#9fd0ff', 'Liens'), CB('#2a1f6b', 'Nébuleuse'), R('density', 'Densité', 'uParamA', 0.5)],
+    glsl: `
+float segd(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h); }
+vec2 starPos(vec2 cell) { return cell + 0.2 + 0.6 * hash22(cell + uSeed); }
+vec3 effect(vec2 uv) {
+  float sc = 5.0 + uParamA * 9.0;
+  vec2 p = asp(uv) * sc;
+  vec2 cell = floor(p);
+  float glow = 0.0, lines = 0.0;
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 cc = cell + vec2(i, j);
+    vec2 s = starPos(cc);
+    float appear = sstep(hash21(cc) * 0.6, hash21(cc) * 0.6 + 0.05, uP * uSpeed);
+    float tw = 0.6 + 0.4 * sin(uT * 3.0 + hash21(cc) * 30.0) + uBeat * 0.3;
+    glow += exp(-length(p - s) * 22.0) * tw * appear * 1.5;
+    vec2 s2 = starPos(cc + vec2(1.0, 0.0));
+    vec2 s3 = starPos(cc + vec2(0.0, 1.0));
+    float link = sstep(0.3 + hash21(cc + 5.0) * 0.6, 0.4 + hash21(cc + 5.0) * 0.6, uP * uSpeed);
+    if (hash21(cc + 2.0) > 0.45) lines += sstep(0.03, 0.0, segd(p, s, s2)) * link;
+    if (hash21(cc + 4.0) > 0.55) lines += sstep(0.03, 0.0, segd(p, s, s3)) * link;
+  }
+  float neb = fbm(asp(uv) * 2.5 + uT * 0.02);
+  return uColB * neb * 0.6 + vec3(1.0, 0.97, 0.9) * glow + uColA * lines * 0.8 + uColB * lum(albedo(uv)) * 0.25;
+}`,
+  },
 ];
 
 export const EFFECT_MAP = new Map(EFFECTS.map((e) => [e.id, e]));
@@ -912,9 +1182,36 @@ export function defaultParams(effectId: string): Record<string, number | string 
   const e = EFFECT_MAP.get(effectId);
   const out: Record<string, number | string | boolean> = {};
   if (!e) return out;
-  for (const p of e.params) out[p.key] = p.default;
+  for (const p of [...e.params, ...COMMON_PARAMS]) out[p.key] = p.default;
   return out;
 }
+
+/** Options avancées disponibles pour tous les tableaux. */
+export const COMMON_PARAMS: ParamDef[] = [
+  {
+    key: '_target', label: 'Calques ciblés', type: 'select', slot: 'uTarget', default: 0,
+    options: [
+      { value: 0, label: 'Toute la façade' },
+      { value: 20, label: 'Ouvertures (fenêtres, portes, rosace)' },
+      { value: 22, label: 'Tous les calques' },
+      { value: 21, label: 'Murs uniquement (hors calques)' },
+      { value: 2, label: 'Fenêtres' },
+      { value: 3, label: 'Portes / portails' },
+      { value: 4, label: 'Rosace' },
+      { value: 5, label: 'Colonnes / piliers' },
+      { value: 6, label: 'Corniches / frises' },
+      { value: 7, label: 'Toits / pignons' },
+      { value: 8, label: 'Statues / ornements' },
+      { value: 9, label: 'Tours / clochers' },
+      { value: 10, label: 'Horloge' },
+    ],
+  },
+  { key: '_targetBg', label: 'Hors cible', type: 'select', slot: 'uTargetBg', default: 0, options: [{ value: 0, label: 'Noir' }, { value: 1, label: 'Lumière douce' }] },
+  { key: '_react', label: 'Réaction à la musique', type: 'range', slot: 'uReact', min: 0, max: 1.5, step: 0.01, default: 0 },
+  { key: '_mirror', label: 'Symétrie', type: 'select', slot: 'uMirror', default: 0, options: [{ value: 0, label: 'Aucune' }, { value: 1, label: 'Gauche → droite' }, { value: 2, label: 'Droite → gauche' }] },
+  { key: '_hue', label: 'Décalage de teinte', type: 'range', slot: 'uHue', min: -0.5, max: 0.5, step: 0.01, default: 0 },
+  { key: '_sat', label: 'Saturation', type: 'range', slot: 'uSat', min: 0, max: 2, step: 0.01, default: 1 },
+];
 
 export const TRANSITIONS = [
   { id: 'fondu', label: 'Fondu enchaîné' },
@@ -925,4 +1222,8 @@ export const TRANSITIONS = [
   { id: 'cascade', label: 'Cascade de calques' },
   { id: 'flash', label: 'Flash blanc' },
   { id: 'cut', label: 'Coupe franche' },
+  { id: 'iris', label: 'Iris (cercle)' },
+  { id: 'volets', label: 'Volets' },
+  { id: 'pixels', label: 'Pixellisation' },
+  { id: 'tourbillon', label: 'Tourbillon' },
 ];

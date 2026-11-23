@@ -30,6 +30,7 @@ export const SCENARIOS: Scenario[] = [
       { effect: 'ombres', weight: 1.0 },
       { effect: 'matiere', weight: 1.0, params: { mat: 0 }, transition: 'montee' },
       { effect: 'aurore', weight: 1.0, params: { colorA: '#3dffb0', colorB: '#ff3d8b' } },
+      { effect: 'etoiles', weight: 1.0, transition: 'iris' },
       { effect: 'feuxartifice', weight: 1.1, transition: 'flash' },
       { effect: 'allumage', weight: 0.7, params: { colorA: '#ffe3b0' } },
     ],
@@ -39,6 +40,7 @@ export const SCENARIOS: Scenario[] = [
     steps: [
       { effect: 'dessin', weight: 1.2 },
       { effect: 'soleil', weight: 1.2, transition: 'montee' },
+      { effect: 'cinema', weight: 0.9, transition: 'volets' },
       { effect: 'relief', weight: 1.0 },
       { effect: 'extrusion', weight: 1.0, transition: 'dissolution' },
       { effect: 'faisceaux', weight: 0.9 },
@@ -52,13 +54,15 @@ export const SCENARIOS: Scenario[] = [
   {
     id: 'halloween', name: 'Halloween', description: 'Orage, ombres inquiétantes, flammes et glitchs.', palette: ['#ff7a1a', '#8a2be2'],
     steps: [
+      { effect: 'brume', weight: 1.0 },
       { effect: 'orage', weight: 1.2 },
       { effect: 'ombres', weight: 1.0, params: { colorA: '#ff7a1a', colorB: '#1a0b2e' } },
       { effect: 'faisceaux', weight: 1.0, params: { colorA: '#ff7a1a', colorB: '#8a2be2' } },
       { effect: 'extrusion', weight: 0.9, params: { colorA: '#ffd2a8', tint: 0.4 } },
       { effect: 'glitch', weight: 0.6, transition: 'cut' },
       { effect: 'effondrement', weight: 1.2, params: { colorA: '#ff4a00' }, transition: 'flash' },
-      { effect: 'feu', weight: 1.0 },
+      { effect: 'lave', weight: 1.0 },
+      { effect: 'sable', weight: 1.0, transition: 'tourbillon' },
       { effect: 'neon', weight: 0.9 },
       { effect: 'texte', weight: 0.7, params: { text: 'Halloween', colorA: '#ff7a1a', colorB: '#14051f' } },
     ],
@@ -72,7 +76,8 @@ export const SCENARIOS: Scenario[] = [
       { effect: 'battement', weight: 0.8, params: { colorA: '#ffffff', colorB: '#ff2b3b' }, transition: 'flash' },
       { effect: 'extrusion', weight: 0.9 },
       { effect: 'neon', weight: 0.8, params: { colorA: '#2453ff', colorB: '#ff2b3b' } },
-      { effect: 'kaleido', weight: 0.8, params: { colorA: '#2453ff', colorB: '#ff2b3b' } },
+      { effect: 'lasers', weight: 0.9, params: { colorA: '#2453ff', colorB: '#ff2b3b' } },
+      { effect: 'drapeau', weight: 1.0, transition: 'volets' },
       { effect: 'feuxartifice', weight: 1.4, transition: 'flash' },
       { effect: 'texte', weight: 0.7, params: { text: 'Vive la fête !', colorA: '#ffffff', colorB: '#0c1f6b' } },
     ],
@@ -95,10 +100,11 @@ export const SCENARIOS: Scenario[] = [
     steps: [
       { effect: 'rideau', weight: 0.8, params: { colorA: '#8c1036' } },
       { effect: 'texte', weight: 0.8, params: { text: 'Camille & Sacha', colorA: '#ffe6ef' } },
+      { effect: 'petales', weight: 1.1, transition: 'iris' },
       { effect: 'lierre', weight: 1.1, params: { colorB: '#ff8ab8' } },
       { effect: 'matiere', weight: 1.0, params: { mat: 1 } },
       { effect: 'vitrail', weight: 1.0, params: { colorA: '#ff6fa8', colorB: '#ffd36b' } },
-      { effect: 'mosaique', weight: 0.9, params: { colorA: '#ffd36b', colorB: '#ff8ab8' } },
+      { effect: 'aquarelle', weight: 1.0, params: { colorA: '#ff8ab8', colorB: '#ffd36b' } },
       { effect: 'kaleido', weight: 0.8, params: { colorA: '#ff8ab8', colorB: '#ffd36b' } },
       { effect: 'feuxartifice', weight: 1.2, transition: 'flash' },
     ],
@@ -107,7 +113,7 @@ export const SCENARIOS: Scenario[] = [
 
 // Effets dont les couleurs sont « libres » : la palette du scénario s'y applique.
 // Les autres (neige, eau, feu, soleil…) gardent leurs couleurs naturelles.
-const PALETTE_FX = new Set(['vitrail', 'mosaique', 'aurore', 'portails', 'scan', 'puzzle', 'faisceaux', 'neon', 'vague', 'battement', 'kaleido', 'glitch']);
+const PALETTE_FX = new Set(['vitrail', 'mosaique', 'aurore', 'portails', 'scan', 'puzzle', 'faisceaux', 'neon', 'vague', 'battement', 'kaleido', 'glitch', 'onde', 'lasers', 'pixels', 'aquarelle', 'matrix']);
 
 function makeClip(effect: string, duration: number, params: Record<string, ParamValue> = {}, transition = 'fondu'): Clip {
   return {
@@ -193,7 +199,7 @@ function surprise(): Scenario {
     };
     return `#${f(0)}${f(8)}${f(4)}`;
   };
-  const transitions = ['fondu', 'balayage', 'montee', 'dissolution', 'cascade', 'flash'];
+  const transitions = ['fondu', 'balayage', 'montee', 'dissolution', 'cascade', 'flash', 'iris', 'volets', 'pixels', 'tourbillon'];
   const steps: Step[] = [
     { effect: take(calme) },
     { effect: take(calme), transition: pick(transitions) },

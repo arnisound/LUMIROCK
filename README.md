@@ -14,17 +14,17 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 | **1. Monument** | Importer une photo de façade, ou partir d'un monument modèle (église gothique, hôtel de ville, château fort) avec ses calques déjà prêts. |
 | **2. Redressement** | Placer 4 coins (avec loupe) : la façade est mise à plat, comme vue parfaitement de face. Dimensions réelles optionnelles pour des proportions exactes. |
 | **3. Calques** | Détourer fenêtres, portes, rosace, colonnes, corniches, statues… Outils rectangle, arc plein cintre, arc gothique, ellipse, polygone, miroir. Détection automatique des ouvertures. Profondeur calculée par IA (Depth Anything V2, dans le navigateur). |
-| **4. Spectacle** | Composer avec 29 tableaux, 6 scénarios (Noël, Patrimoine, Halloween, Fête nationale, Quatre saisons, Mariage) ou « Surprends-moi ». Musique avec détection du tempo, effets qui pulsent sur le rythme, calage des tableaux sur les mesures. Ligne de temps, transitions, réglages fins. |
+| **4. Spectacle** | Composer avec 41 tableaux, 6 scénarios (Noël, Patrimoine, Halloween, Fête nationale, Quatre saisons, Mariage) ou « Surprends-moi ». Musique avec détection du tempo, effets qui pulsent sur le rythme, calage des tableaux sur les mesures. Ligne de temps, 12 transitions, réglages fins et options avancées (calques ciblés, réaction à la musique, symétrie, teinte, saturation). |
 | **5. Export** | Vidéo MP4 (jusqu'à 4K, 25 à 60 i/s, avec la musique), un fichier par tableau pour le direct, kit pro (.zip), gabarits de calage, projection plein écran depuis le navigateur. |
 
 ## Les tableaux
 
 - **Lumière** : Allumage, Course du soleil (ombres qui tournent), Faisceaux fantômes, Orage, Mille bougies
-- **Architecture** : Dessin d'architecte, Pierres vivantes (extrusion), Effondrement / reconstruction, Relief vivant 3D (parallaxe), Puzzle, Scan laser
-- **Matières** : Vitrail, Transmutation (or, marbre, glace, cuivre), Mosaïque
-- **Nature** : Montée des eaux, Embrasement, Nuit de neige, Jardin suspendu, Aurore boréale
-- **Graphique** : Squelette néon, Vague de couleurs, Battements, Kaléidoscope, Glitch, Feux d'artifice
-- **Illusions** : Fenêtres sur l'ailleurs, Lever de rideau, Texte lumineux / gravé, Théâtre d'ombres
+- **Architecture** : Dessin d'architecte, Pierres vivantes (extrusion), Effondrement / reconstruction, Relief vivant 3D (parallaxe), Puzzle, Scan laser, Désintégration
+- **Matières** : Vitrail, Transmutation (or, marbre, glace, cuivre), Mosaïque, Aquarelle
+- **Nature** : Montée des eaux, Embrasement, Nuit de neige, Jardin suspendu, Aurore boréale, Coulée de lave, Brume mystérieuse, Pluie de pétales
+- **Graphique** : Squelette néon, Vague de couleurs, Battements, Kaléidoscope, Glitch, Feux d'artifice, Pluie numérique, Onde de choc, Show laser, Pixellisation, Drapeau
+- **Illusions** : Fenêtres sur l'ailleurs, Lever de rideau, Texte lumineux / gravé, Théâtre d'ombres, Vieux film, Constellations
 
 Chaque tableau calcule la **lumière à projeter** (pas une image « collée ») : la vue *Simulation nuit* montre fidèlement ce que verra le public, la vue *Projection* montre ce qui sort du vidéoprojecteur.
 
