@@ -16,6 +16,7 @@ import { Stage } from './ui/stage';
 import { MAIN_TRACK, Timeline } from './ui/timeline';
 import { Preset, loadPresets, savePresets } from './presets';
 import { Previews } from './ui/previews';
+import { TOUR_HOME, TOUR_SHOW, markTour, runTour, tourDone } from './ui/tour';
 import { buildKit, canvasToPng, drawTemplate, zipFiles } from './export/kit';
 import { exportClips, exportVideo, videoCodecFor } from './export/video';
 import { SavedState, autosave, download, loadAutosave, loadLumirock, saveLumirock } from './export/projectio';
@@ -163,6 +164,9 @@ export class App {
     if (errors.length) console.error(errors);
     requestAnimationFrame((t) => this.loop(t));
     this.goto('source');
+    this.loadLogo();
+    if (location.hash.includes('demo=')) this.openDemoFromHash();
+    else if (!tourDone('home')) setTimeout(() => runTour(TOUR_HOME, () => markTour('home')), 900);
     loadAutosave().then((s) => {
       if (s && s.facade) {
         this.hasAutosave = s;
@@ -204,6 +208,7 @@ export class App {
         h('img', { class: 'logo-mark', src: `${import.meta.env.BASE_URL}favicon.png`, alt: '' }),
         h('span', { class: 'logo-text' }, h('span', { class: 'logo' }, 'LUMIROCK'), h('span', { class: 'by' }, 'by Arnisound tools')),
       ),
+      this.facade || this.slots.length > 1 ? this.facadeSwitcher() : null,
       h('nav', { class: 'steps' },
         ...STEPS.map((s, i) =>
           h('button', { class: `step${this.step === s.id ? ' active' : ''}`, disabled: !can(s.id), onclick: () => this.goto(s.id) },
@@ -218,6 +223,7 @@ export class App {
           this.undoBtns = { u, r };
           return h('div', { class: 'undo' }, u, r);
         })(),
+        h('button', { class: 'btn icon ghost help-btn', title: 'Visite guidée', onclick: () => runTour(this.step === 'spectacle' ? TOUR_SHOW : TOUR_HOME) }, icon('help')),
         h('button', { class: 'btn ghost', title: 'Nouveau projet', onclick: () => this.newProject() }, 'Nouveau'),
         h('button', { class: 'btn ghost', title: 'Ouvrir un fichier .lumirock', onclick: async () => {
           const f = await pickFile('.lumirock,application/zip');
@@ -457,12 +463,14 @@ export class App {
     }
     this.renderSide();
     this.renderStageHint();
+    if (step === 'spectacle' && !tourDone('show') && !this.root.dataset.demo && !document.querySelector('.tour')) setTimeout(() => runTour(TOUR_SHOW, () => markTour('show')), 700);
     requestAnimationFrame(() => this.stage.fit());
     this.dirty = true;
   }
 
   private renderStageHint() {
     this.stage.root.querySelector('.hero')?.remove();
+    this.stage.frame.style.visibility = this.step === 'source' && !this.facade ? 'hidden' : '';
     if (this.step === 'source' && !this.facade) {
       this.stage.root.append(
         h('div', { class: 'hero' },
@@ -1108,7 +1116,8 @@ export class App {
         ], onChange: (v) => (o.content = v as typeof o.content) }),
         select<string>({ label: 'Image', value: o.mode, options: [
           { value: 'projection', label: 'Projection (à envoyer au vidéoprojecteur)' },
-          { value: 'simulation', label: 'Simulation nuit (pour présenter au client)' },
+          { value: 'simulation', label: 'Simulation nuit' },
+          { value: 'presentation', label: 'Présentation client (simulation + titre + signature)' },
         ], onChange: (v) => (o.mode = v as ViewMode) }),
         h('label', { class: 'check', title: 'Ombres deux fois plus fines et rendu suréchantillonné : plus beau, environ 2× plus long' }, h('input', { type: 'checkbox', checked: o.final, onchange: (e: Event) => (o.final = (e.target as HTMLInputElement).checked) }), 'Qualité finale (plus fin, plus long)'),
         this.audio ? h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: o.audio, onchange: (e: Event) => (o.audio = (e.target as HTMLInputElement).checked) }), 'Inclure la musique') : null,
@@ -1133,9 +1142,30 @@ export class App {
         ),
       ),
       h('div', { class: 'card' },
+        h('div', { class: 'card-title' }, 'Présenter au client'),
+        h('p', { class: 'muted small' }, 'Lance le spectacle en simulation de nuit, en plein écran, avec le titre du projet : idéal en rendez-vous.'),
+        h('button', { class: 'btn primary wide', onclick: () => this.present() }, icon('play'), 'Mode présentation'),
+        h('p', { class: 'muted small', style: 'margin-top:12px' }, 'Lien de démonstration gratuit : enregistrez le projet (.lumirock), déposez-le dans un dépôt GitHub public, puis collez ici le lien « Raw » du fichier.'),
+        (() => {
+          const inp = h('input', { type: 'text', placeholder: 'https://raw.githubusercontent.com/…/projet.lumirock' });
+          const out = h('input', { type: 'text', readonly: true, placeholder: 'Le lien à envoyer apparaîtra ici' });
+          inp.addEventListener('input', () => {
+            out.value = inp.value.trim() ? `${location.origin}${location.pathname}#demo=${encodeURIComponent(inp.value.trim())}` : '';
+          });
+          return h('div', {},
+            h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Lien du fichier .lumirock'), inp),
+            h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Lien à envoyer au client'), out),
+            h('button', { class: 'btn ghost wide', onclick: () => {
+              if (!out.value) return;
+              navigator.clipboard?.writeText(out.value).then(() => toast('Lien copié.', 'ok'), () => out.select());
+            } }, icon('copy'), 'Copier le lien'),
+          );
+        })(),
+      ),
+      h('div', { class: 'card' },
         h('div', { class: 'card-title' }, 'Projeter directement'),
-        h('p', { class: 'muted small' }, 'Branchez le vidéoprojecteur, glissez cette fenêtre sur son écran, passez en mode « Projection » puis en plein écran.'),
-        h('button', { class: 'btn ghost wide', onclick: () => this.fullscreen() }, icon('expand'), 'Plein écran'),
+        h('p', { class: 'muted small' }, 'Ouvrez la sortie projecteur, glissez-la sur l’écran du vidéoprojecteur puis double-cliquez pour le plein écran.'),
+        h('button', { class: 'btn ghost wide', onclick: () => this.openOutput() }, icon('screen'), 'Sortie projecteur'),
       ),
     );
   }
@@ -1160,10 +1190,10 @@ export class App {
       this.sourceImage = await imageDataFromBlob(file);
       this.sourceCanvas = imageDataToCanvas(this.sourceImage);
       this.quad = [[0.08, 0.08], [0.92, 0.08], [0.92, 0.92], [0.08, 0.92]];
+      const media = this.project.media;
       this.project = emptyProject();
       this.project.name = file.name.replace(/\.[^.]+$/, '');
-      this.mediaBlobs.clear();
-      this.mediaRuntime.clear();
+      this.project.media = media;
       this.history.reset(this.project);
       this.facade = null;
       this.aiDepth = null;
@@ -1179,6 +1209,7 @@ export class App {
 
   loadTemplate(id: string) {
     const t = TEMPLATES.find((x) => x.id === id)!.build();
+    const media = this.project.media;
     this.project = emptyProject();
     this.project.name = t.name;
     this.project.zones = t.zones;
@@ -1188,9 +1219,8 @@ export class App {
     this.quad = [[0, 0], [1, 0], [1, 1], [0, 1]];
     this.aiDepth = null;
     this.aiDepthBlob = null;
+    this.project.media = media;
     this.setFacade(t.image);
-    this.mediaBlobs.clear();
-    this.mediaRuntime.clear();
     this.history.reset(this.project);
     this.selectedClip = null;
     this.time = 0;
@@ -1712,8 +1742,10 @@ export class App {
     const base = (this.project.name || 'lumirock').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\d-]+/g, '_');
     try {
       this.exportingFrames = true;
+      const present = (o.mode as string) === 'presentation';
       const common = {
-        scene: this.scene, analysis: this.audio?.analysis ?? null, width: W, height: H, fps: o.fps, quality: o.quality, mode: o.mode, onProgress, signal: ctrl.signal, finalQuality: o.final,
+        decorate: present ? (ctx: CanvasRenderingContext2D, w: number, hh: number, t: number) => this.drawPresentation(ctx, w, hh, t) : undefined,
+        scene: this.scene, analysis: this.audio?.analysis ?? null, width: W, height: H, fps: o.fps, quality: o.quality, mode: (present ? 'simulation' : o.mode) as ViewMode, onProgress, signal: ctrl.signal, finalQuality: o.final,
         mediaProvider: (id: string, clip: Clip, local: number) => this.mediaSource(id, clip, local),
         prepareFrame: (t: number, show: typeof this.project.show) => this.syncVideosAt(t, show),
       };
@@ -1779,8 +1811,100 @@ export class App {
     this.stage.gl.toBlob((b) => b && download(b, `lumirock_${fmtTime(this.time).replace(/[:.]/g, '-')}.png`), 'image/png');
   }
 
+  // ───────────────────────── Présentation client ─────────────────────────
+  private logoImg: HTMLImageElement | null = null;
+
+  private loadLogo() {
+    if (this.logoImg) return;
+    const img = new Image();
+    img.src = `${import.meta.env.BASE_URL}logo-512.png`;
+    this.logoImg = img;
+  }
+
+  /** Habillage de la vidéo de présentation : carton titre puis signature discrète. */
+  drawPresentation(ctx: CanvasRenderingContext2D, w: number, hh: number, t: number) {
+    const s = Math.min(w, hh) / 1080;
+    const intro = Math.max(0, 1 - Math.max(0, t - 3) / 1.2);
+    if (intro > 0) {
+      ctx.fillStyle = `rgba(5,6,10,${0.72 * intro})`;
+      ctx.fillRect(0, 0, w, hh);
+      ctx.globalAlpha = intro;
+      const L = 220 * s;
+      if (this.logoImg?.complete) ctx.drawImage(this.logoImg, w / 2 - L / 2, hh / 2 - L - 40 * s, L, L);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#fff';
+      ctx.font = `700 ${64 * s}px Cinzel, Georgia, serif`;
+      ctx.fillText(this.project.name || 'Spectacle', w / 2, hh / 2 + 50 * s);
+      ctx.fillStyle = '#e0a23e';
+      ctx.font = `500 ${28 * s}px Inter, sans-serif`;
+      ctx.fillText('Projet de video mapping — simulation', w / 2, hh / 2 + 100 * s);
+      ctx.globalAlpha = 1;
+    }
+    ctx.textAlign = 'right';
+    ctx.font = `600 ${20 * s}px Inter, sans-serif`;
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillText('LUMIROCK · by Arnisound tools', w - 24 * s, hh - 24 * s);
+    ctx.textAlign = 'left';
+    ctx.fillText(this.project.name || '', 24 * s, hh - 24 * s);
+  }
+
+  /** Mode présentation : plein écran, simulation de nuit, titre. */
+  present() {
+    if (!this.scene) return;
+    this.loadLogo();
+    this.view = 'simulation';
+    this.renderViewSwitch();
+    this.seek(0);
+    const frame = this.stage.frame;
+    frame.querySelector('.present-title')?.remove();
+    const title = h('div', { class: 'present-title' },
+      h('img', { src: `${import.meta.env.BASE_URL}logo-512.png`, alt: '' }),
+      h('div', { class: 'pt-name' }, this.project.name || 'Spectacle'),
+      h('div', { class: 'pt-sub' }, 'Projet de video mapping — simulation'));
+    frame.appendChild(title);
+    setTimeout(() => title.classList.add('out'), 3500);
+    setTimeout(() => title.remove(), 5000);
+    frame.requestFullscreen?.().catch(() => undefined).finally(() => setTimeout(() => this.stage.fit(), 120));
+    this.play();
+  }
+
+  /** Ouverture d'un lien de démonstration (#demo=URL du fichier .lumirock). */
+  private async openDemoFromHash() {
+    const m = location.hash.match(/demo=([^&]+)/);
+    if (!m) return;
+    const url = decodeURIComponent(m[1]);
+    try {
+      this.busy('Chargement de la démonstration…');
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(String(r.status));
+      await this.restore(await loadLumirock(await r.blob()));
+      this.root.dataset.demo = '1';
+      this.goto('spectacle');
+      const go = h('button', { class: 'demo-start' },
+        h('img', { src: `${import.meta.env.BASE_URL}logo-512.png`, alt: '' }),
+        h('b', {}, this.project.name || 'Spectacle'),
+        h('span', {}, '▶ Lancer la présentation'));
+      go.addEventListener('click', () => {
+        go.remove();
+        this.present();
+      });
+      document.body.appendChild(go);
+    } catch (e) {
+      console.error(e);
+      toast('Impossible de charger la démonstration (lien invalide ou fichier inaccessible).', 'err', 8000);
+    } finally {
+      this.busy(null);
+    }
+  }
+
   // ───────────────────────── Projet ─────────────────────────
   private async currentState(): Promise<SavedState> {
+    const main = await this.facadeState();
+    main.others = this.slots.filter((x, i) => i !== this.activeSlot && x.state).map((x) => x.state!);
+    return main;
+  }
+
+  private async facadeState(): Promise<SavedState> {
     if (this.facade && !this.facadeBlob) this.facadeBlob = await imageDataToBlob(this.facade);
     if (!this.sourceBlob && this.sourceImage) this.sourceBlob = await imageDataToBlob(this.sourceImage);
     return {
@@ -1826,15 +1950,57 @@ export class App {
     this.busy('Restauration du projet…');
     try {
       this.pause();
-      this.project = s.project;
+      await this.restoreFacade(s, false);
+      if (s.audio) await this.loadAudio(s.audio.blob, s.audio.name);
+      else this.audio = null;
+      this.mediaBlobs.clear();
+      this.mediaRuntime.clear();
+      for (const m of s.media ?? []) this.mediaBlobs.set(m.id, m.blob);
+      for (const item of this.project.media ?? []) await this.prepareMedia(item);
+      this.slots = [{ name: this.project.name, state: null }, ...(s.others ?? []).map((o) => ({ name: o.project.name, state: o }))];
+      this.activeSlot = 0;
+      this.history.reset(this.project);
+      this.selectedClip = null;
+      this.time = 0;
+      this.goto(this.facade ? 'spectacle' : 'source');
+      toast(this.slots.length > 1 ? `Projet restauré (${this.slots.length} façades).` : 'Projet restauré.', 'ok');
+    } finally {
+      this.busy(null);
+    }
+  }
+
+  // ───────────────────────── Plusieurs façades ─────────────────────────
+  slots: { name: string; state: SavedState | null }[] = [{ name: 'Façade 1', state: null }];
+  activeSlot = 0;
+
+  /** Charge les données d'une façade (sans toucher à la musique ni aux médias). */
+  private async restoreFacade(s: SavedState | null, full = true) {
+    const media = this.project.media;
+    if (!s) {
+      this.project = emptyProject();
+      this.facade = null;
+      this.scene = null;
+      this.sourceImage = null;
+      this.sourceCanvas = null;
+      this.sourceBlob = null;
+      this.facadeBlob = null;
+      this.aiDepth = null;
+      this.aiDepthBlob = null;
+      this.quad = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    } else {
+      this.project = structuredClone(s.project);
       this.quad = s.quad ?? [[0, 0], [1, 0], [1, 1], [0, 1]];
       this.sourceBlob = s.source;
+      this.sourceImage = null;
+      this.sourceCanvas = null;
       if (s.source) {
         this.sourceImage = await imageDataFromBlob(s.source);
         this.sourceCanvas = imageDataToCanvas(this.sourceImage);
       }
       this.aiDepth = null;
       this.aiDepthBlob = s.aiDepth;
+      this.facade = null;
+      this.scene = null;
       if (s.facade) {
         const img = await imageDataFromBlob(s.facade, MAX_WORK * 2);
         if (s.aiDepth) {
@@ -1846,24 +2012,75 @@ export class App {
         }
         this.facadeBlob = s.facade;
         this.facade = img;
+        this.facadeVersion++;
         this.project.width = img.width;
         this.project.height = img.height;
         this.rebuildNow();
       }
-      if (s.audio) await this.loadAudio(s.audio.blob, s.audio.name);
-      else this.audio = null;
-      this.mediaBlobs.clear();
-      this.mediaRuntime.clear();
-      for (const m of s.media ?? []) this.mediaBlobs.set(m.id, m.blob);
-      for (const item of this.project.media ?? []) await this.prepareMedia(item);
+    }
+    if (full) {
+      // la médiathèque est commune à toutes les façades
+      const all = [...(media ?? [])];
+      for (const m of this.project.media ?? []) if (!all.some((x) => x.id === m.id)) all.push(m);
+      this.project.media = all;
       this.history.reset(this.project);
       this.selectedClip = null;
       this.time = 0;
+      this.zoneEditor.zones = this.project.zones;
+      this.zoneEditor.selected = null;
       this.goto(this.facade ? 'spectacle' : 'source');
-      toast('Projet restauré.', 'ok');
+    }
+  }
+
+  async switchFacade(i: number) {
+    if (i === this.activeSlot || !this.slots[i]) return;
+    this.pause();
+    this.busy('Changement de façade…');
+    try {
+      this.slots[this.activeSlot] = { name: this.project.name, state: this.facade ? await this.facadeState() : null };
+      this.activeSlot = i;
+      await this.restoreFacade(this.slots[i].state);
+      if (!this.slots[i].state) this.project.name = this.slots[i].name;
     } finally {
       this.busy(null);
     }
+  }
+
+  async addFacade() {
+    this.pause();
+    this.slots[this.activeSlot] = { name: this.project.name, state: this.facade ? await this.facadeState() : null };
+    const name = `Façade ${this.slots.length + 1}`;
+    this.slots.push({ name, state: null });
+    this.activeSlot = this.slots.length - 1;
+    await this.restoreFacade(null);
+    this.project.name = name;
+    this.renderHeader();
+    toast(`${name} ajoutée : importez sa photo ou choisissez un modèle.`, 'ok', 4500);
+  }
+
+  async removeFacade() {
+    if (this.slots.length < 2 || !confirm(`Supprimer la façade « ${this.project.name} » de ce projet ?`)) return;
+    this.slots.splice(this.activeSlot, 1);
+    this.activeSlot = 0;
+    await this.restoreFacade(this.slots[0].state);
+    this.scheduleSave();
+  }
+
+  private facadeSwitcher() {
+    const names = this.slots.map((x, i) => (i === this.activeSlot ? this.project.name || x.name : x.name));
+    const sel = h('select', { class: 'facade-sel', title: 'Façades du projet' },
+      ...names.map((n, i) => h('option', { value: String(i), selected: i === this.activeSlot }, `🏛 ${n}`)),
+      h('option', { value: 'add' }, '＋ Ajouter une façade'),
+      this.slots.length > 1 ? h('option', { value: 'del' }, '✕ Supprimer cette façade') : null,
+    );
+    sel.addEventListener('change', () => {
+      const v = sel.value;
+      sel.value = String(this.activeSlot);
+      if (v === 'add') this.addFacade();
+      else if (v === 'del') this.removeFacade();
+      else this.switchFacade(Number(v));
+    });
+    return sel;
   }
 
   newProject() {
@@ -1882,6 +2099,8 @@ export class App {
     this.time = 0;
     this.mediaBlobs.clear();
     this.mediaRuntime.clear();
+    this.slots = [{ name: 'Façade 1', state: null }];
+    this.activeSlot = 0;
     this.history.reset(this.project);
     this.goto('source');
   }

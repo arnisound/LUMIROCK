@@ -14,8 +14,20 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 | **1. Monument** | Importer une photo de façade, ou partir d'un monument modèle (église gothique, hôtel de ville, château fort) avec ses calques déjà prêts. |
 | **2. Redressement** | Placer 4 coins (avec loupe) : la façade est mise à plat, comme vue parfaitement de face. Dimensions réelles optionnelles pour des proportions exactes. |
 | **3. Calques** | Détourer fenêtres, portes, rosace, colonnes, corniches, statues… Outils rectangle, arc plein cintre, arc gothique, ellipse, polygone, miroir. Détection automatique des ouvertures. Profondeur calculée par IA (Depth Anything V2, dans le navigateur). |
-| **4. Spectacle** | Composer avec 41 tableaux, 6 scénarios (Noël, Patrimoine, Halloween, Fête nationale, Quatre saisons, Mariage) ou « Surprends-moi ». Musique avec détection du tempo, effets qui pulsent sur le rythme, calage des tableaux sur les mesures. Ligne de temps, 12 transitions, réglages fins et options avancées (calques ciblés, réaction à la musique, symétrie, teinte, saturation). |
+| **4. Spectacle** | Composer avec 43 tableaux, 6 scénarios (Noël, Patrimoine, Halloween, Fête nationale, Quatre saisons, Mariage) ou « Surprends-moi ». Musique avec détection du tempo, effets qui pulsent sur le rythme, calage des tableaux sur les mesures. Ligne de temps, 12 transitions, réglages fins et options avancées (calques ciblés, réaction à la musique, symétrie, teinte, saturation). |
 | **5. Export** | Vidéo MP4 (jusqu'à 4K, 25 à 60 i/s, avec la musique), un fichier par tableau pour le direct, kit pro (.zip), gabarits de calage, projection plein écran depuis le navigateur. |
+
+## Fonctions avancées
+
+- **Annuler / Rétablir** (Ctrl+Z / Ctrl+Maj+Z) sur tout le projet.
+- **Pistes superposées** : les lumières s'additionnent (opacité, mode de mélange, masquage).
+- **Images clés** ◆ : chaque réglage (intensité, couleur, vitesse…) évolue pendant le tableau.
+- **Vos images et vidéos** : sur toute la façade ou cadrées dans chaque calque (une vidéo dans chaque fenêtre).
+- **Détourage IA en un clic** (SlimSAM) et analyse de la façade en arrière-plan.
+- **Mode live** : pads au clavier, tap tempo, noir, intensité ; **sortie projecteur** dans une 2e fenêtre.
+- **Aperçus animés** des tableaux, **préréglages** personnels, export **qualité finale**.
+- **Présentation client** : mode plein écran, vidéo habillée (titre + signature) et **lien de démonstration** (`#demo=` + lien d'un fichier .lumirock public).
+- **Plusieurs façades** par projet, **visite guidée**, interface **mobile**.
 
 ## Les tableaux
 
@@ -24,7 +36,8 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 - **Matières** : Vitrail, Transmutation (or, marbre, glace, cuivre), Mosaïque, Aquarelle
 - **Nature** : Montée des eaux, Embrasement, Nuit de neige, Jardin suspendu, Aurore boréale, Coulée de lave, Brume mystérieuse, Pluie de pétales
 - **Graphique** : Squelette néon, Vague de couleurs, Battements, Kaléidoscope, Glitch, Feux d'artifice, Pluie numérique, Onde de choc, Show laser, Pixellisation, Drapeau
-- **Illusions** : Fenêtres sur l'ailleurs, Lever de rideau, Texte lumineux / gravé, Théâtre d'ombres, Vieux film, Constellations
+- **Illusions** : Fenêtres sur l'ailleurs, Lever de rideau, Texte lumineux / gravé, Théâtre d'ombres, Vieux film, Constellations, Image / vidéo importée
+- **Utilitaire** : Pause (noir)
 
 Chaque tableau calcule la **lumière à projeter** (pas une image « collée ») : la vue *Simulation nuit* montre fidèlement ce que verra le public, la vue *Projection* montre ce qui sort du vidéoprojecteur.
 
@@ -67,6 +80,7 @@ Le site statique est généré dans `dist/`. Le workflow `.github/workflows/depl
 | [fflate](https://github.com/101arrowz/fflate) | MIT | Archives .zip |
 | [Transformers.js](https://github.com/huggingface/transformers.js) | Apache-2.0 | IA dans le navigateur |
 | [Depth Anything V2 Small](https://github.com/DepthAnything/Depth-Anything-V2) | Apache-2.0 | Estimation de profondeur |
+| [SlimSAM](https://github.com/czg1225/SlimSAM) | Apache-2.0 | Détourage en un clic |
 
 Aucune donnée n'est envoyée sur un serveur : photos, musiques et projets restent sur l'ordinateur de l'utilisateur (sauvegarde automatique dans le navigateur, fichiers `.lumirock` à enregistrer).
 

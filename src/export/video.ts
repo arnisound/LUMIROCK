@@ -25,6 +25,7 @@ export interface VideoExportOptions {
   mediaProvider?: Renderer['mediaProvider'];
   prepareFrame?: (t: number, show: Show) => Promise<void>;
   finalQuality?: boolean;
+  decorate?: (ctx: CanvasRenderingContext2D, w: number, h: number, t: number) => void;
 }
 
 export async function videoCodecFor(width: number, height: number) {
@@ -56,7 +57,7 @@ export async function exportVideo(o: VideoExportOptions): Promise<{ blob: Blob; 
   renderer.quality = o.finalQuality ? 1 : 0;
   let canvas: HTMLCanvasElement = renderCanvas;
   let down: CanvasRenderingContext2D | null = null;
-  if (ss > 1.01) {
+  if (ss > 1.01 || o.decorate) {
     canvas = document.createElement('canvas');
     canvas.width = W;
     canvas.height = H;
@@ -85,7 +86,10 @@ export async function exportVideo(o: VideoExportOptions): Promise<{ blob: Blob; 
     const t = o.t0 + i / o.fps;
     if (o.prepareFrame) await o.prepareFrame(t, o.show);
     renderer.render(o.show, t, audioFrameAt(t, o.analysis, o.show.bpm), o.mode ?? 'projection', { fade: o.fade });
-    if (down) down.drawImage(renderCanvas, 0, 0, W, H);
+    if (down) {
+      down.drawImage(renderCanvas, 0, 0, W, H);
+      o.decorate?.(down, W, H, t - o.t0);
+    }
     await video.add(i / o.fps, 1 / o.fps);
     if (i % 5 === 0) {
       o.onProgress?.(i / frames, `Image ${i + 1} / ${frames}`);

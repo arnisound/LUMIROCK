@@ -10,6 +10,7 @@ export interface SavedState {
   aiDepth: Blob | null; // profondeur IA (PNG)
   audio: { blob: Blob; name: string } | null;
   media?: { id: string; blob: Blob }[]; // images et vidéos importées
+  others?: SavedState[]; // autres façades du projet
 }
 
 export async function saveLumirock(s: SavedState): Promise<Blob> {
@@ -21,6 +22,10 @@ export async function saveLumirock(s: SavedState): Promise<Blob> {
   if (s.aiDepth) files['profondeur_ia.png'] = new Uint8Array(await s.aiDepth.arrayBuffer());
   if (s.audio) files['musique.audio'] = new Uint8Array(await s.audio.blob.arrayBuffer());
   for (const m of s.media ?? []) files[`medias/${m.id}`] = new Uint8Array(await m.blob.arrayBuffer());
+  for (const [k, o] of (s.others ?? []).entries()) {
+    const sub = await saveLumirock({ ...o, audio: null, media: [], others: [] });
+    files[`facades/${String(k).padStart(2, '0')}.lumirock`] = new Uint8Array(await sub.arrayBuffer());
+  }
   return new Blob([zipSync(files, { level: 0 })], { type: 'application/zip' });
 }
 
@@ -31,7 +36,10 @@ export async function loadLumirock(file: Blob): Promise<SavedState> {
   const blob = (k: string, type = '') => (files[k] ? new Blob([files[k] as BlobPart], { type }) : null);
   const audio = blob('musique.audio');
   const media = Object.keys(files).filter((k) => k.startsWith('medias/')).map((k) => ({ id: k.slice(7), blob: new Blob([files[k] as BlobPart]) }));
+  const others: SavedState[] = [];
+  for (const k of Object.keys(files).filter((x) => x.startsWith('facades/')).sort()) others.push(await loadLumirock(new Blob([files[k] as BlobPart])));
   return {
+    others,
     media,
     project: meta.project,
     quad: meta.quad,
