@@ -11,8 +11,8 @@ export interface TimelineEvents {
   seek: (t: number) => void;
   select: (id: string | null) => void;
   selectTrack: (trackId: string) => void;
-  reorder: (trackId: string, from: number, to: number) => void;
-  resize: (id: string, duration: number, final: boolean) => void;
+  move: (id: string, trackId: string, start: number, final: boolean) => void;
+  trim: (id: string, start: number, duration: number, final: boolean) => void;
   togglePlay: () => void;
   home: () => void;
   addTrack: () => void;
@@ -213,70 +213,138 @@ export class Timeline {
     this.setTime(this.time);
   }
 
+  /** Aimantage : temps de la musique, bords des autres tableaux, tête de lecture. */
+  private snapTime(t: number, selfId: string) {
+    if (!this.snap || !this.show) return t;
+    const thr = 9 / this.pps;
+    const cands: number[] = [0, this.time];
+    const lists = [this.show.clips, ...(this.show.layers ?? []).map((l) => l.clips)];
+    for (const list of lists) for (const tm of trackTimings(list)) if (tm.clip.id !== selfId) cands.push(tm.start, tm.end);
+    let best = t, bd = thr;
+    for (const c of cands) if (Math.abs(c - t) < bd) {
+      bd = Math.abs(c - t);
+      best = c;
+    }
+    if (best !== t) return best;
+    const bpm = this.analysis?.bpm ?? this.show.bpm;
+    const off = this.analysis?.offset ?? 0;
+    const beat = 60 / bpm;
+    const g = off + Math.round((t - off) / beat) * beat;
+    return Math.abs(g - t) < thr ? Math.max(0, g) : t;
+  }
+
   private fillTrack(row: HTMLElement, view: TrackView) {
-    const show = this.show!;
     const timings = trackTimings(view.clips);
-    timings.forEach((tm, idx) => {
+    // zones de transition (chevauchements)
+    for (let i = 0; i < timings.length; i++)
+      for (let j = i + 1; j < timings.length; j++) {
+        const A = timings[i], B = timings[j];
+        const o1 = Math.min(A.end, B.end);
+        if (B.start < o1 - 0.01) row.appendChild(h('div', { class: 'tl-xfade', style: `left:${8 + B.start * this.pps}px;width:${(o1 - B.start) * this.pps}px`, title: 'Transition (chevauchement)' }));
+      }
+    timings.forEach((tm) => {
       const e = EFFECT_MAP.get(tm.clip.effect);
       const color = tm.clip.effect === 'vide' ? '#3a4150' : e ? CATEGORY_COLORS[e.category] : '#888';
-      const handle = h('div', { class: 'tl-resize', title: 'Glisser pour changer la durée' });
       const hasKeys = tm.clip.keys && Object.keys(tm.clip.keys).length > 0;
+      const left = h('div', { class: 'tl-resize l', title: 'Glisser pour rogner le début' });
+      const right = h('div', { class: 'tl-resize', title: 'Glisser pour changer la durée' });
       const el = h(
         'div',
         {
           class: `tl-clip${tm.clip.id === this.selected ? ' sel' : ''}${tm.clip.effect === 'vide' ? ' empty' : ''}`,
-          style: `left:${8 + tm.start * this.pps}px;width:${Math.max(4, tm.clip.duration * this.pps - 2)}px;--c:${color}`,
-          title: `${e?.name ?? tm.clip.effect} — ${tm.clip.duration.toFixed(1)} s`,
+          style: `left:${8 + tm.start * this.pps}px;width:${Math.max(6, tm.clip.duration * this.pps - 1)}px;--c:${color}`,
+          title: `${e?.name ?? tm.clip.effect} — ${tm.start.toFixed(1)} s → ${tm.end.toFixed(1)} s`,
         },
         h('div', { class: 'tl-clip-name' }, hasKeys ? '◆ ' : '', e?.name ?? tm.clip.effect),
         h('div', { class: 'tl-clip-dur' }, `${tm.clip.duration.toFixed(1)} s`),
-        tm.clip.transition !== 'cut' && idx < timings.length - 1 ? h('div', { class: 'tl-trans', style: `width:${tm.clip.transitionDuration * this.pps}px` }) : null,
-        handle,
+        left,
+        right,
       );
-      handle.addEventListener('pointerdown', (e) => {
-        e.stopPropagation();
-        handle.setPointerCapture(e.pointerId);
-        const x0 = e.clientX, d0 = tm.clip.duration;
-        const beat = 60 / (this.analysis?.bpm ?? show.bpm);
+      // durée (bord droit)
+      right.addEventListener('pointerdown', (ev) => {
+        ev.stopPropagation();
+        right.setPointerCapture(ev.pointerId);
+        const x0 = ev.clientX, d0 = tm.clip.duration;
         const calc = (m: PointerEvent) => {
-          let d = Math.max(0.5, d0 + (m.clientX - x0) / this.pps);
-          if (this.snap) d = Math.max(beat, Math.round(d / beat) * beat);
-          return Math.round(d * 100) / 100;
+          const end = this.snapTime(tm.start + Math.max(0.5, d0 + (m.clientX - x0) / this.pps), tm.clip.id);
+          return Math.round(Math.max(0.5, end - tm.start) * 100) / 100;
         };
-        const mv = (m: PointerEvent) => this.ev.resize(tm.clip.id, calc(m), false);
-        handle.addEventListener('pointermove', mv);
-        handle.addEventListener('pointerup', (m) => {
-          handle.removeEventListener('pointermove', mv);
-          this.ev.resize(tm.clip.id, calc(m), true);
+        const mv = (m: PointerEvent) => {
+          const d = calc(m);
+          el.style.width = `${Math.max(6, d * this.pps - 1)}px`;
+          this.ev.trim(tm.clip.id, tm.start, d, false);
+        };
+        right.addEventListener('pointermove', mv);
+        right.addEventListener('pointerup', (m) => {
+          right.removeEventListener('pointermove', mv);
+          this.ev.trim(tm.clip.id, tm.start, calc(m), true);
         }, { once: true });
       });
-      el.addEventListener('pointerdown', (e) => {
-        el.setPointerCapture(e.pointerId);
-        this.ev.selectTrack(view.id);
-        this.ev.select(tm.clip.id);
-        const x0 = e.clientX;
-        let moved = false;
+      // rognage du début (bord gauche) : la fin reste fixe
+      left.addEventListener('pointerdown', (ev) => {
+        ev.stopPropagation();
+        left.setPointerCapture(ev.pointerId);
+        const x0 = ev.clientX;
+        const calc = (m: PointerEvent): [number, number] => {
+          let s = this.snapTime(Math.max(0, tm.start + (m.clientX - x0) / this.pps), tm.clip.id);
+          s = Math.min(s, tm.end - 0.5);
+          return [Math.round(s * 100) / 100, Math.round((tm.end - s) * 100) / 100];
+        };
         const mv = (m: PointerEvent) => {
-          const dx = m.clientX - x0;
-          if (Math.abs(dx) > 5) moved = true;
-          if (moved) {
-            el.style.transform = `translateX(${dx}px)`;
-            el.classList.add('dragging');
+          const [st, d] = calc(m);
+          el.style.left = `${8 + st * this.pps}px`;
+          el.style.width = `${Math.max(6, d * this.pps - 1)}px`;
+          this.ev.trim(tm.clip.id, st, d, false);
+        };
+        left.addEventListener('pointermove', mv);
+        left.addEventListener('pointerup', (m) => {
+          left.removeEventListener('pointermove', mv);
+          this.ev.trim(tm.clip.id, ...calc(m), true);
+        }, { once: true });
+      });
+      // déplacement libre (et changement de piste)
+      el.addEventListener('pointerdown', (ev) => {
+        el.setPointerCapture(ev.pointerId);
+        this.ev.selectTrack(view.id);
+        el.classList.add('sel');
+        const x0 = ev.clientX;
+        let moved = false;
+        let target: HTMLElement | null = null;
+        const startAt = (m: PointerEvent) => {
+          let s = Math.max(0, tm.start + (m.clientX - x0) / this.pps);
+          const se = this.snapTime(s, tm.clip.id);
+          if (se !== s) s = se;
+          else {
+            const ee = this.snapTime(s + tm.clip.duration, tm.clip.id);
+            if (ee !== s + tm.clip.duration) s = ee - tm.clip.duration;
           }
+          return Math.round(Math.max(0, s) * 100) / 100;
+        };
+        const mv = (m: PointerEvent) => {
+          if (Math.abs(m.clientX - x0) > 4 || Math.abs(m.clientY - ev.clientY) > 8) moved = true;
+          if (!moved) return;
+          el.classList.add('dragging');
+          el.style.left = `${8 + startAt(m) * this.pps}px`;
+          const under = document.elementsFromPoint(m.clientX, m.clientY).find((x) => x.classList.contains('tl-track')) as HTMLElement | undefined;
+          target?.classList.remove('drop');
+          target = under && under !== row ? under : null;
+          target?.classList.add('drop');
+          el.style.transform = target ? `translateY(${target.getBoundingClientRect().top - row.getBoundingClientRect().top}px)` : '';
         };
         el.addEventListener('pointermove', mv);
         el.addEventListener('pointerup', (m) => {
           el.removeEventListener('pointermove', mv);
-          const r = this.content.getBoundingClientRect();
+          target?.classList.remove('drop');
           if (!moved) {
+            const r = this.content.getBoundingClientRect();
+            this.selected = tm.clip.id;
             this.ev.seek(Math.max(0, (m.clientX - r.left - 8) / this.pps));
+            this.ev.select(tm.clip.id);
             return;
           }
-          const tx = (m.clientX - r.left - 8) / this.pps;
-          let to = timings.findIndex((x) => tx < (x.start + x.end) / 2);
-          if (to < 0) to = timings.length - 1;
-          else if (to > idx) to -= 1;
-          this.ev.reorder(view.id, idx, to);
+          this.selected = tm.clip.id;
+          this.ev.move(tm.clip.id, target?.dataset.track ?? view.id, startAt(m), true);
+          this.ev.select(tm.clip.id);
         }, { once: true });
       });
       row.appendChild(el);

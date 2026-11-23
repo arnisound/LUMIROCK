@@ -3,7 +3,7 @@
 // la simulation de nuit calcule ensuite « façade × (ambiance + lumière projetée) ».
 
 export type ParamType = 'range' | 'color' | 'text' | 'select' | 'toggle' | 'media';
-export type UniformSlot = 'uIntensity' | 'uSpeed' | 'uColA' | 'uColB' | 'uParamA' | 'uParamB' | 'uParamC' | 'aux'
+export type UniformSlot = 'uIntensity' | 'uSpeed' | 'uColA' | 'uColB' | 'uParamA' | 'uParamB' | 'uParamC' | 'uParamD' | 'uParamE' | 'uParamF' | 'uParamG' | 'aux'
   | 'uTarget' | 'uTargetBg' | 'uReact' | 'uMirror' | 'uHue' | 'uSat';
 
 export interface ParamDef {
@@ -1166,21 +1166,20 @@ vec3 effect(vec2 uv) {
   // ───────────────────────────── MÉDIAS ─────────────────────────────
   {
     id: 'media', name: 'Image / vidéo', category: 'Illusions', mood: 'calme', defaultDuration: 10,
-    description: 'Projette votre image ou votre vidéo sur toute la façade, ou cadrée dans chaque calque ciblé (ex. une vidéo dans chaque fenêtre).',
+    description: 'Projette votre image ou votre vidéo sur la façade, ou cadrée dans chaque calque ciblé (ex. une vidéo dans chaque fenêtre). Déplacez-la et redimensionnez-la directement sur l’image.',
     tags: [],
     params: [
       { key: 'media', label: 'Média', type: 'media', slot: 'aux', default: '' },
       I(),
-      SEL('fit', 'Placement', 'uParamC', ['Toute la façade', 'Dans chaque calque (cadré)'], 0),
-      R('stone', 'Mélange avec la pierre', 'uParamA', 0.4),
-      R('zoom', 'Zoom', 'uParamB', 0, 0, 1),
+      SEL('fit', 'Placement', 'uParamC', ['Sur la façade', 'Dans chaque calque (cadré)'], 0),
+      SEL('cover', 'Ajustement', 'uParamD', ['Entier (contenir)', 'Remplir (couvrir)'], 0),
+      R('scale', 'Échelle', 'uParamB', 1, 0.05, 4),
+      R('posX', 'Position horizontale', 'uParamE', 0, -1.5, 1.5),
+      R('posY', 'Position verticale', 'uParamF', 0, -1.5, 1.5),
+      R('rot', 'Rotation (°)', 'uParamG', 0, -180, 180, 1),
+      R('stone', 'Mélange avec la pierre', 'uParamA', 0.3),
     ],
     glsl: `
-vec2 coverUV(vec2 q, float boxAspect) {
-  vec2 s = vec2(1.0);
-  if (uAuxAspect > boxAspect) s.x = boxAspect / uAuxAspect; else s.y = uAuxAspect / boxAspect;
-  return (q - 0.5) * s / (1.0 + uParamB * 1.5) + 0.5;
-}
 vec3 effect(vec2 uv) {
   vec2 q = uv;
   float boxA = uAspect;
@@ -1191,7 +1190,19 @@ vec3 effect(vec2 uv) {
     q = (uv - (g.xy - g.zw * 0.5)) / max(g.zw, vec2(1e-4));
     boxA = g.z * uAspect / max(g.w, 1e-4);
   }
-  vec3 c = texture(uAux, coverUV(q, boxA)).rgb;
+  // taille du média dans la boîte (contenir ou couvrir), puis échelle
+  vec2 size = vec2(1.0);
+  bool wide = uAuxAspect > boxA;
+  if (uParamD < 0.5) size = wide ? vec2(1.0, boxA / uAuxAspect) : vec2(uAuxAspect / boxA, 1.0);
+  else size = wide ? vec2(uAuxAspect / boxA, 1.0) : vec2(1.0, boxA / uAuxAspect);
+  size *= max(uParamB, 0.01);
+  vec2 center = vec2(0.5 + uParamE * 0.5, 0.5 + uParamF * 0.5);
+  vec2 d = (q - center) * vec2(boxA, 1.0);
+  float a = radians(uParamG);
+  d = mat2(cos(a), sin(a), -sin(a), cos(a)) * d;
+  vec2 m = d / (size * vec2(boxA, 1.0)) + 0.5;
+  if (m.x < 0.0 || m.y < 0.0 || m.x > 1.0 || m.y > 1.0) return vec3(0.0);
+  vec3 c = texture(uAux, m).rgb;
   c *= mix(1.0, 0.4 + 1.2 * lum(albedo(uv)), uParamA);
   return c * 1.25;
 }`,

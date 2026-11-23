@@ -46,6 +46,8 @@ export interface Clip {
   transition: string; // transition vers le tableau suivant
   transitionDuration: number;
   keys?: Record<string, Keyframe[]>; // images clés par paramètre
+  start?: number; // position libre sur la piste (secondes)
+  fade?: number; // fondu d'entrée / sortie quand le tableau borde un vide (secondes)
 }
 
 export type BlendMode = 'add' | 'screen' | 'max';

@@ -107,7 +107,7 @@ export async function exportVideo(o: VideoExportOptions): Promise<{ blob: Blob; 
 export async function exportClips(o: Omit<VideoExportOptions, 't0' | 't1' | 'fade'>, onFile: (name: string, blob: Blob) => void) {
   const timings = computeTimings(o.show);
   for (const [k, tm] of timings.entries()) {
-    const single: Show = { ...o.show, clips: [{ ...tm.clip, transition: 'cut' }] };
+    const single: Show = { ...o.show, layers: [], clips: [{ ...tm.clip, start: 0, fade: 0, transition: 'cut' }] };
     const { blob } = await exportVideo({
       ...o, show: single, t0: 0, t1: tm.clip.duration, fade: false, withAudio: false,
       onProgress: (r, m) => o.onProgress?.((k + r) / timings.length, `Tableau ${k + 1}/${timings.length} — ${m}`),

@@ -37,6 +37,10 @@ uniform float uSpeed;
 uniform float uParamA;
 uniform float uParamB;
 uniform float uParamC;
+uniform float uParamD;
+uniform float uParamE;
+uniform float uParamF;
+uniform float uParamG;
 
 #define PI 3.14159265359
 #define TAU 6.28318530718

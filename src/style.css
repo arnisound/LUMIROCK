@@ -230,7 +230,7 @@ input[type='range']::-moz-range-thumb { width: 15px; height: 15px; border: 0; bo
 .tl-clip.dragging { opacity: 0.8; z-index: 5; cursor: grabbing; }
 .tl-clip-name { font-weight: 600; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tl-clip-dur { font-size: 11px; color: rgba(255, 255, 255, 0.6); }
-.tl-trans { position: absolute; right: 0; bottom: 0; height: 6px; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5)); border-radius: 3px 0 0 0; pointer-events: none; }
+.tl-trans { display: none; position: absolute; right: 0; bottom: 0; height: 6px; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5)); border-radius: 3px 0 0 0; pointer-events: none; }
 .tl-resize { position: absolute; right: 0; top: 0; bottom: 0; width: 9px; cursor: ew-resize; }
 .tl-resize::after { content: ''; position: absolute; right: 3px; top: 50%; height: 22px; margin-top: -11px; width: 2px; border-radius: 2px; background: rgba(255, 255, 255, 0.45); }
 .tl-head { position: absolute; top: 0; bottom: 0; width: 2px; left: 0; margin-left: -1px; background: #fff; box-shadow: 0 0 8px rgba(255, 255, 255, 0.8); pointer-events: none; z-index: 6; }
@@ -320,3 +320,10 @@ details.card.adv[open] > summary::after { transform: rotate(90deg); }
 .tour-bubble p { margin: 0 0 12px; color: #c3cad8; }
 .tb-count { position: absolute; right: 14px; top: 14px; font-size: 11px; color: var(--muted); }
 .tb-row { display: flex; gap: 6px; justify-content: flex-end; }
+
+/* ─── timeline libre ─── */
+.tl-resize.l { left: 0; right: auto; cursor: ew-resize; }
+.tl-resize.l::after { left: 3px; right: auto; }
+.tl-xfade { position: absolute; top: 15px; height: 58px; border-radius: 6px; background: repeating-linear-gradient(135deg, rgba(255,255,255,0.09) 0 3px, transparent 3px 9px); border-left: 1px dashed rgba(255,255,255,0.5); border-right: 1px dashed rgba(255,255,255,0.5); pointer-events: none; z-index: 3; }
+.tl-track.drop { background: rgba(224, 162, 62, 0.14); box-shadow: inset 0 0 0 1px var(--accent); }
+.tl-clip.dragging { z-index: 10; box-shadow: 0 8px 20px rgba(0,0,0,0.5); }

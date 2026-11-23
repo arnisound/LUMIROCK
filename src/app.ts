@@ -4,7 +4,7 @@ import { fitToWork, rectify } from './analysis/rectify';
 import { detectOpenings } from './analysis/detect';
 import { AudioAnalysis, analyseAudio, audioFrameAt, decodeAudio } from './audio';
 import { CATEGORIES, CATEGORY_COLORS, COMMON_PARAMS, EFFECTS, EFFECT_MAP, ParamDef, TRANSITIONS } from './effects/library';
-import { Renderer, SceneMaps, ViewMode, showDuration, trackTimings } from './gl/renderer';
+import { Renderer, SceneMaps, ViewMode, freezeStarts, showDuration, trackTimings } from './gl/renderer';
 import { SCENARIOS, compose, defaultShow, newClip } from './scenarios';
 import { TEMPLATES } from './templates';
 import { Clip, Layer, MediaItem, Project, Pt, ZONE_TYPES, ZoneTypeKey, uid, zoneType } from './types';
@@ -102,7 +102,7 @@ export class App {
   history = new History();
   previews = new Previews();
   mediaBlobs = new Map<string, Blob>();
-  private mediaRuntime = new Map<string, { image?: ImageBitmap; video?: HTMLVideoElement; used?: number }>();
+  private mediaRuntime = new Map<string, { image?: HTMLCanvasElement; video?: HTMLVideoElement; used?: number }>();
   private frameNo = 0;
   private newScenarioDur = 120;
 
@@ -130,21 +130,27 @@ export class App {
       selectTrack: (tid) => {
         this.timeline.activeTrack = tid;
       },
-      reorder: (tid, from, to) => {
-        const c = this.trackList(tid);
-        const [m] = c.splice(from, 1);
-        c.splice(to, 0, m);
+      move: (id, tid, start) => {
+        const f = this.findClip(id);
+        if (!f) return;
+        f.clip.start = start;
+        const dest = this.trackList(tid);
+        if (dest !== f.list) {
+          f.list.splice(f.list.indexOf(f.clip), 1);
+          dest.push(f.clip);
+          this.timeline.activeTrack = tid;
+        }
         this.refreshShowUI();
         this.scheduleSave();
       },
-      resize: (id, d, final) => {
+      trim: (id, start, d, final) => {
         const c = this.findClip(id)?.clip;
         if (!c) return;
+        c.start = start;
         c.duration = d;
-        c.transitionDuration = Math.min(c.transitionDuration, d / 2);
-        this.timeline.setData(this.project.show, this.audio?.analysis ?? null, this.selectedClip);
         this.dirty = true;
         if (final) {
+          this.timeline.setData(this.project.show, this.audio?.analysis ?? null, this.selectedClip);
           this.renderSide();
           this.scheduleSave();
         }
@@ -460,6 +466,7 @@ export class App {
     if (step === 'spectacle' || step === 'export') {
       this.timeline.setData(this.project.show, this.audio?.analysis ?? null, this.selectedClip);
       requestAnimationFrame(() => this.timeline.fit());
+      this.updateGizmo();
     }
     this.renderSide();
     this.renderStageHint();
@@ -752,9 +759,10 @@ export class App {
       this.scheduleSave();
     };
     add(b,
-      h('p', { class: 'muted' }, 'Les pistes superposées s’ajoutent à la piste principale : par exemple un fond « Course du soleil » et, par-dessus, « Mille bougies » ciblé sur les fenêtres. Utilisez « Pause (noir) » pour espacer les tableaux d’une piste.'),
+      h('p', { class: 'muted' }, 'Placez les tableaux librement : un espace vide = noir, deux tableaux qui se chevauchent = transition. Glissez un tableau sur une autre piste pour le superposer (les lumières s’additionnent).'),
       h('div', { class: 'card' }, h('div', { class: 'card-title' }, 'Piste principale'),
         h('p', { class: 'muted small' }, `${show.clips.length} tableaux`),
+        h('button', { class: 'btn ghost wide', onclick: () => this.closeGaps(MAIN_TRACK) }, 'Supprimer les vides'),
         h('button', { class: 'btn ghost wide', onclick: () => {
           this.timeline.activeTrack = MAIN_TRACK;
           this.showTab = 'tableaux';
@@ -787,6 +795,7 @@ export class App {
             this.showTab = 'tableaux';
             this.refreshShowUI();
           } }, icon('plus'), 'Ajouter un tableau'),
+          h('button', { class: 'btn ghost', title: 'Supprimer les vides de cette piste', onclick: () => this.closeGaps(l.id) }, 'Resserrer'),
           h('button', { class: 'btn danger', title: 'Supprimer la piste', onclick: () => this.deleteLayer(l.id) }, icon('trash')),
         ),
       )),
@@ -963,8 +972,8 @@ export class App {
       h('div', { class: 'clip-head', style: `--c:${CATEGORY_COLORS[e.category]}` },
         h('div', {}, h('small', {}, `Tableau ${idx + 1} · ${e.category}`), h('b', {}, e.name)),
         h('div', { class: 'row' },
-          h('button', { class: 'btn icon', title: 'Déplacer avant', disabled: idx === 0, onclick: () => this.moveClip(clip.id, -1) }, icon('left')),
-          h('button', { class: 'btn icon', title: 'Déplacer après', disabled: idx === list.length - 1, onclick: () => this.moveClip(clip.id, 1) }, icon('right')),
+          h('button', { class: 'btn icon', title: 'Avancer d’un temps', disabled: found.start <= 0, onclick: () => this.moveClip(clip.id, -1) }, icon('left')),
+          h('button', { class: 'btn icon', title: 'Reculer d’un temps', onclick: () => this.moveClip(clip.id, 1) }, icon('right')),
           h('button', { class: 'btn icon', title: 'Enregistrer comme préréglage', onclick: () => {
             const name = prompt('Nom du préréglage :', `${e.name} perso`);
             if (!name) return;
@@ -976,6 +985,7 @@ export class App {
         ),
       ),
       h('p', { class: 'muted small' }, e.description),
+      clip.effect === 'media' ? h('p', { class: 'muted small' }, 'Sur l’image : glissez le média pour le déplacer, tirez un coin pour l’agrandir, la pastille ronde pour le tourner. Double-clic pour recentrer.') : null,
       h('p', { class: 'muted small kf-help' }, `◆ = image clé à la position de lecture (${Math.round(prog * 100)} % du tableau) : le réglage évoluera dans le temps.`),
       fxSel,
       slider({ label: 'Durée (s)', min: 1, max: 60, step: 0.5, value: clip.duration, onInput: (x) => {
@@ -989,13 +999,21 @@ export class App {
         h('div', { class: 'card-title' }, 'Transition vers le tableau suivant'),
         select<string>({ value: clip.transition, options: TRANSITIONS.map((t) => ({ value: t.id, label: t.label })), onChange: (x) => {
           clip.transition = x;
-          if (x !== 'cut' && clip.transitionDuration === 0) clip.transitionDuration = 1.5;
           this.timeline.render();
           changed();
         } }),
-        slider({ label: 'Durée de transition (s)', min: 0, max: 6, step: 0.1, value: clip.transitionDuration, onInput: (x) => {
-          clip.transitionDuration = Math.min(x, clip.duration / 2);
-          this.timeline.render();
+        (() => {
+          const end = found.start + clip.duration;
+          const next = trackTimings(list).find((t) => t.clip !== clip && t.start > found.start && t.start <= end + 0.05);
+          if (!next) return h('p', { class: 'muted small' }, 'Faites chevaucher le tableau suivant sur la ligne de temps pour créer la transition (la zone hachurée).');
+          return slider({ label: 'Durée de la transition (chevauchement, s)', min: 0, max: Math.min(8, clip.duration, next.clip.duration), step: 0.1, value: Math.max(0, end - next.start), onInput: (x) => {
+            next.clip.start = Math.round((end - x) * 100) / 100;
+            this.timeline.setData(this.project.show, this.audio?.analysis ?? null, this.selectedClip);
+            changed();
+          } });
+        })(),
+        slider({ label: 'Fondu quand le tableau borde un vide (s)', min: 0, max: 4, step: 0.1, value: clip.fade ?? 0.6, onInput: (x) => {
+          clip.fade = x;
           changed();
         } }),
       ),
@@ -1173,7 +1191,164 @@ export class App {
   refreshShowUI() {
     this.timeline.setData(this.project.show, this.audio?.analysis ?? null, this.selectedClip);
     if (this.step === 'spectacle' || this.step === 'export') this.renderSide();
+    this.updateGizmo();
     this.dirty = true;
+  }
+
+  // ───────────────────────── Manipulation des médias sur l'image ─────────────────────────
+  private gizmoDrag: { mode: 'move' | 'scale' | 'rotate'; p0: Pt; v0: Record<string, number>; d0: number; a0: number } | null = null;
+
+  private mediaClip() {
+    if (this.live.on || (this.step !== 'spectacle' && this.step !== 'export')) return null;
+    const f = this.findClip(this.selectedClip);
+    if (!f || f.clip.effect !== 'media' || Number(f.clip.params.fit ?? 0) > 0.5) return null;
+    if (this.time < f.start - 0.01 || this.time > f.start + f.clip.duration + 0.01) return null;
+    return f;
+  }
+
+  private mediaAspect(id: string) {
+    const r = this.mediaRuntime.get(id);
+    if (r?.image) return r.image.width / r.image.height;
+    if (r?.video?.videoWidth) return r.video.videoWidth / r.video.videoHeight;
+    return 16 / 9;
+  }
+
+  /** Coins du média (coordonnées 0..1 de l'écran, origine en haut à gauche) et centre. */
+  private gizmoGeom() {
+    const f = this.mediaClip();
+    if (!f || !this.scene) return null;
+    const prog = Math.min(1, Math.max(0, (this.time - f.start) / f.clip.duration));
+    const v = (k: string, d: number) => Number(paramAt(f.clip, k, prog, d));
+    const boxA = this.scene.width / this.scene.height;
+    const ma = this.mediaAspect(String(f.clip.params.media));
+    const wide = ma > boxA;
+    let sw: number, sh: number;
+    if (v('cover', 0) < 0.5) [sw, sh] = wide ? [1, boxA / ma] : [ma / boxA, 1];
+    else [sw, sh] = wide ? [ma / boxA, 1] : [1, boxA / ma];
+    const sc = Math.max(0.01, v('scale', 1));
+    sw *= sc;
+    sh *= sc;
+    const cx = 0.5 + v('posX', 0) * 0.5, cy = 0.5 + v('posY', 0) * 0.5;
+    const a = (v('rot', 0) * Math.PI) / 180;
+    const corners = ([[0, 0], [1, 0], [1, 1], [0, 1]] as Pt[]).map(([mx, my]) => {
+      const dx = (mx - 0.5) * sw * boxA, dy = (my - 0.5) * sh;
+      const qx = Math.cos(a) * dx + Math.sin(a) * dy, qy = -Math.sin(a) * dx + Math.cos(a) * dy;
+      return [cx + qx / boxA, 1 - (cy + qy)] as Pt;
+    });
+    // poignée de rotation : au-dessus du milieu du bord haut de l'image du média
+    const top: Pt = [(corners[2][0] + corners[3][0]) / 2, (corners[2][1] + corners[3][1]) / 2];
+    return { f, prog, corners, center: [cx, 1 - cy] as Pt, top, v };
+  }
+
+  private setMediaParam(key: string, value: number) {
+    const g = this.gizmoGeom();
+    if (!g) return;
+    const clip = g.f.clip;
+    if (clip.keys?.[key]?.length) setKey(clip, key, g.prog, value);
+    else clip.params[key] = Math.round(value * 1000) / 1000;
+    this.dirty = true;
+  }
+
+  updateGizmo() {
+    const on = !!this.mediaClip();
+    if (this.step !== 'spectacle' && this.step !== 'export') return;
+    if (!on) {
+      this.stage.handlers = {};
+      this.stage.setMode({ gl: !!this.facade, overlay: false });
+      this.stage.redraw();
+      return;
+    }
+    const s = this.stage;
+    s.setMode({ gl: true, overlay: true, cursor: 'move' });
+    const px = (p: Pt): Pt => [p[0] * s.cssW, p[1] * s.cssH];
+    s.handlers = {
+      down: (p) => {
+        const g = this.gizmoGeom();
+        if (!g) return;
+        const P = px(p);
+        const C = px(g.center);
+        const near = (q: Pt) => Math.hypot(px(q)[0] - P[0], px(q)[1] - P[1]) < 14;
+        const v0 = { posX: g.v('posX', 0), posY: g.v('posY', 0), scale: g.v('scale', 1), rot: g.v('rot', 0) };
+        const T = px(g.top);
+        const dirx = T[0] - C[0], diry = T[1] - C[1], dl = Math.hypot(dirx, diry) || 1;
+        const knob: Pt = [(T[0] + (dirx / dl) * 26) / s.cssW, (T[1] + (diry / dl) * 26) / s.cssH];
+        let mode: 'move' | 'scale' | 'rotate' = 'move';
+        if (near(knob)) mode = 'rotate';
+        else if (g.corners.some(near)) mode = 'scale';
+        this.gizmoDrag = { mode, p0: p, v0, d0: Math.hypot(P[0] - C[0], P[1] - C[1]) || 1, a0: Math.atan2(P[1] - C[1], P[0] - C[0]) };
+      },
+      move: (p) => {
+        const d = this.gizmoDrag;
+        if (!d) return;
+        const g = this.gizmoGeom();
+        if (!g) return;
+        const P = px(p), C = px(g.center);
+        if (d.mode === 'move') {
+          this.setMediaParam('posX', d.v0.posX + (p[0] - d.p0[0]) * 2);
+          this.setMediaParam('posY', d.v0.posY - (p[1] - d.p0[1]) * 2);
+        } else if (d.mode === 'scale') {
+          this.setMediaParam('scale', Math.max(0.05, Math.min(4, (d.v0.scale * Math.hypot(P[0] - C[0], P[1] - C[1])) / d.d0)));
+        } else {
+          let r = d.v0.rot - ((Math.atan2(P[1] - C[1], P[0] - C[0]) - d.a0) * 180) / Math.PI;
+          r = ((r + 540) % 360) - 180;
+          this.setMediaParam('rot', Math.round(r));
+        }
+      },
+      up: () => {
+        if (this.gizmoDrag) {
+          this.gizmoDrag = null;
+          this.renderSide();
+          this.scheduleSave();
+        }
+      },
+      dbl: () => {
+        // double-clic : recentrer et remettre à l'échelle 1
+        this.setMediaParam('posX', 0);
+        this.setMediaParam('posY', 0);
+        this.setMediaParam('scale', 1);
+        this.setMediaParam('rot', 0);
+        this.renderSide();
+        this.scheduleSave();
+      },
+      draw: (ctx, w, hh) => {
+        const g = this.gizmoGeom();
+        if (!g) return;
+        const P = g.corners.map(([x, y]) => [x * w, y * hh]);
+        ctx.save();
+        ctx.strokeStyle = '#e0a23e';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        P.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+        ctx.stroke();
+        ctx.setLineDash([]);
+        for (const [x, y] of P) {
+          ctx.fillStyle = '#fff';
+          ctx.strokeStyle = '#000';
+          ctx.fillRect(x - 5, y - 5, 10, 10);
+          ctx.strokeRect(x - 5, y - 5, 10, 10);
+        }
+        const C = [g.center[0] * w, g.center[1] * hh];
+        const T = [g.top[0] * w, g.top[1] * hh];
+        const dx = T[0] - C[0], dy = T[1] - C[1], dl = Math.hypot(dx, dy) || 1;
+        const K = [T[0] + (dx / dl) * 26, T[1] + (dy / dl) * 26];
+        ctx.strokeStyle = '#e0a23e';
+        ctx.beginPath();
+        ctx.moveTo(T[0], T[1]);
+        ctx.lineTo(K[0], K[1]);
+        ctx.stroke();
+        ctx.fillStyle = '#e0a23e';
+        ctx.beginPath();
+        ctx.arc(K[0], K[1], 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(C[0], C[1], 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      },
+    };
+    s.redraw();
   }
 
   // ───────────────────────── Actions ─────────────────────────
@@ -1347,14 +1522,12 @@ export class App {
   addLayer() {
     const layers = (this.project.show.layers ??= []);
     const l: Layer = { id: uid('p'), name: `Piste ${layers.length + 2}`, clips: [], opacity: 1, blend: 'add' };
-    // la nouvelle piste commence par une pause jusqu'à la position de lecture
-    if (this.time > 0.5) l.clips.push({ ...newClip('vide', Math.round(this.time * 10) / 10), transition: 'cut', transitionDuration: 0 });
     layers.push(l);
     this.timeline.activeTrack = l.id;
     this.showTab = 'tableaux';
     this.refreshShowUI();
     this.scheduleSave();
-    toast(`${l.name} ajoutée : choisissez un tableau, il s’ajoutera sur cette piste.`, 'ok', 4500);
+    toast(`${l.name} ajoutée : choisissez un tableau, il se placera à la tête de lecture sur cette piste.`, 'ok', 4500);
   }
 
   deleteLayer(id: string) {
@@ -1370,11 +1543,30 @@ export class App {
     if (params) Object.assign(c.params, structuredClone(params));
     if (keys) c.keys = structuredClone(keys);
     const sel = this.findClip(this.selectedClip);
-    const clips = sel ? sel.list : this.trackList(this.timeline.activeTrack);
-    const i = clips.findIndex((x) => x.id === this.selectedClip);
-    clips.splice(i >= 0 ? i + 1 : clips.length, 0, c);
+    if (sel) {
+      // juste après le tableau sélectionné : les suivants de la piste sont décalés
+      const at = sel.start + sel.clip.duration;
+      for (const x of sel.list) if (x !== sel.clip && (x.start ?? 0) >= at - 0.01) x.start = (x.start ?? 0) + c.duration;
+      c.start = at;
+      sel.list.push(c);
+    } else {
+      // à la tête de lecture, sur une piste libre à cet endroit (sinon nouvelle piste)
+      const t0 = Math.round(this.time * 100) / 100;
+      c.start = t0;
+      const free = (list: Clip[]) => !trackTimings(list).some((t) => t.start < t0 + c.duration - 0.01 && t.end > t0 + 0.01);
+      const order = [this.timeline.activeTrack, MAIN_TRACK, ...(this.project.show.layers ?? []).map((l) => l.id)];
+      let tid = order.find((id) => free(this.trackList(id)));
+      if (!tid) {
+        const layers = (this.project.show.layers ??= []);
+        const l: Layer = { id: uid('p'), name: `Piste ${layers.length + 2}`, clips: [], opacity: 1, blend: 'add' };
+        layers.push(l);
+        tid = l.id;
+      }
+      this.timeline.activeTrack = tid;
+      this.trackList(tid).push(c);
+    }
     this.selectedClip = c.id;
-    this.seek((this.findClip(c.id)?.start ?? 0) + 0.01);
+    this.seek((c.start ?? 0) + 0.01);
     this.refreshShowUI();
     this.scheduleSave();
     toast(`« ${EFFECT_MAP.get(effect)!.name} » ajouté.`, 'ok', 2000);
@@ -1393,22 +1585,39 @@ export class App {
     const f = this.findClip(id);
     if (!f) return;
     const copy: Clip = { ...structuredClone(f.clip), id: uid('c') };
-    f.list.splice(f.list.indexOf(f.clip) + 1, 0, copy);
+    const at = f.start + f.clip.duration;
+    for (const x of f.list) if ((x.start ?? 0) >= at - 0.01) x.start = (x.start ?? 0) + copy.duration;
+    copy.start = at;
+    f.list.push(copy);
     this.selectedClip = copy.id;
     this.refreshShowUI();
     this.scheduleSave();
   }
 
+  /** Décale un tableau d'un temps (selon le tempo). */
   moveClip(id: string, dir: number) {
     const f = this.findClip(id);
     if (!f) return;
-    const clips = f.list;
-    const i = clips.indexOf(f.clip);
-    const j = i + dir;
-    if (j < 0 || j >= clips.length) return;
-    [clips[i], clips[j]] = [clips[j], clips[i]];
+    const beat = 60 / (this.audio?.analysis.bpm ?? this.project.show.bpm);
+    f.clip.start = Math.max(0, Math.round((f.start + dir * beat) * 100) / 100);
     this.refreshShowUI();
     this.scheduleSave();
+  }
+
+  /** Supprime les vides d'une piste (garde les chevauchements). */
+  closeGaps(tid: string) {
+    const list = this.trackList(tid);
+    const tms = trackTimings(list);
+    let end = 0;
+    for (const tm of tms) {
+      const s = tm.start > end ? end : tm.start;
+      const shift = tm.start - s;
+      tm.clip.start = Math.round(s * 100) / 100;
+      end = Math.max(end, tm.end - shift);
+    }
+    this.refreshShowUI();
+    this.scheduleSave();
+    toast('Vides supprimés.', 'ok', 2000);
   }
 
   // ── annuler / rétablir
@@ -1461,7 +1670,15 @@ export class App {
     const blob = this.mediaBlobs.get(item.id);
     if (!blob) return;
     if (item.kind === 'image') {
-      this.mediaRuntime.set(item.id, { image: await createImageBitmap(blob) });
+      // passage par un canevas : WebGL ignore le retournement vertical pour les ImageBitmap
+      const bmp = await createImageBitmap(blob);
+      const k = Math.min(1, 4096 / Math.max(bmp.width, bmp.height));
+      const cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(bmp.width * k));
+      cv.height = Math.max(1, Math.round(bmp.height * k));
+      cv.getContext('2d')!.drawImage(bmp, 0, 0, cv.width, cv.height);
+      bmp.close();
+      this.mediaRuntime.set(item.id, { image: cv });
     } else {
       const v = document.createElement('video');
       v.src = URL.createObjectURL(blob);
@@ -1552,6 +1769,14 @@ export class App {
       c.transitionDuration = Math.min(c.transitionDuration, c.duration / 2);
       t += c.duration;
     });
+    // enchaînement exact sur les mesures, transitions centrées sur les barres
+    let at = 0;
+    for (const c of clips) {
+      const td = c.transition !== 'cut' ? Math.min(c.transitionDuration, c.duration / 2) : 0;
+      c.start = Math.max(0, Math.round((at - (at > 0 ? td / 2 : 0)) * 100) / 100);
+      at += c.duration;
+      c.duration = Math.round((c.duration + td / 2) * 100) / 100;
+    }
     this.refreshShowUI();
     this.scheduleSave();
     toast('Tableaux calés sur les mesures de la musique.', 'ok');
@@ -1650,6 +1875,7 @@ export class App {
         this.renderer.render(this.project.show, this.time, audioFrameAt(this.time, this.audio?.analysis ?? null, this.project.show.bpm), mode);
       }
       this.dirty = false;
+      if (this.gizmoDrag || this.mediaClip()) this.stage.redraw();
       this.frameNo++;
       for (const r of this.mediaRuntime.values()) if (r.video && !r.video.paused && (r.used ?? -1) < this.frameNo - 2) r.video.pause();
     }
@@ -1684,6 +1910,7 @@ export class App {
     }
     this.timeline.setTime(this.time);
     this.dirty = true;
+    this.updateGizmo();
   }
 
   private startAudio() {
@@ -1757,7 +1984,7 @@ export class App {
         download(zipFiles(files), `${base}_tableaux_${W}x${H}.zip`);
       } else if (o.content === 'selected') {
         const clip = this.findClip(this.selectedClip)?.clip ?? this.project.show.clips[0];
-        const show = { ...this.project.show, clips: [{ ...clip, transition: 'cut' }] };
+        const show = { ...this.project.show, layers: [], clips: [{ ...clip, start: 0, fade: 0, transition: 'cut' }] };
         const { blob } = await exportVideo({ ...common, show, t0: 0, t1: clip.duration, withAudio: false, fade: false });
         download(blob, `${base}_${clip.effect}_${W}x${H}.mp4`);
       } else {
@@ -1989,6 +2216,8 @@ export class App {
       this.quad = [[0, 0], [1, 0], [1, 1], [0, 1]];
     } else {
       this.project = structuredClone(s.project);
+      freezeStarts(this.project.show.clips);
+      for (const l of this.project.show.layers ?? []) freezeStarts(l.clips);
       this.quad = s.quad ?? [[0, 0], [1, 0], [1, 1], [0, 1]];
       this.sourceBlob = s.source;
       this.sourceImage = null;

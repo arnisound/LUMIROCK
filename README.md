@@ -20,9 +20,10 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 ## Fonctions avancées
 
 - **Annuler / Rétablir** (Ctrl+Z / Ctrl+Maj+Z) sur tout le projet.
+- **Ligne de temps libre** : placez les tableaux où vous voulez (vide = noir, chevauchement = transition), rognez le début ou la fin, glissez d'une piste à l'autre, aimantage sur les temps et les bords.
 - **Pistes superposées** : les lumières s'additionnent (opacité, mode de mélange, masquage).
 - **Images clés** ◆ : chaque réglage (intensité, couleur, vitesse…) évolue pendant le tableau.
-- **Vos images et vidéos** : sur toute la façade ou cadrées dans chaque calque (une vidéo dans chaque fenêtre).
+- **Vos images et vidéos** : sur la façade ou cadrées dans chaque calque ; position, échelle et rotation réglables ou à la souris directement sur l'image.
 - **Détourage IA en un clic** (SlimSAM) et analyse de la façade en arrière-plan.
 - **Mode live** : pads au clavier, tap tempo, noir, intensité ; **sortie projecteur** dans une 2e fenêtre.
 - **Aperçus animés** des tableaux, **préréglages** personnels, export **qualité finale**.

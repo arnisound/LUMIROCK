@@ -117,6 +117,7 @@ const PALETTE_FX = new Set(['vitrail', 'mosaique', 'aurore', 'portails', 'scan',
 
 function makeClip(effect: string, duration: number, params: Record<string, ParamValue> = {}, transition = 'fondu'): Clip {
   return {
+    start: 0,
     id: uid('c'),
     effect,
     duration,
@@ -170,6 +171,17 @@ export function compose(scenarioId: string, total: number, analysis: AudioAnalys
     }
     clips.push(makeClip(step.effect, Math.round(d * 100) / 100, { ...params, ...step.params }, step.transition ?? 'fondu'));
     t += d;
+  });
+  // positions libres : transitions centrées sur les frontières (chevauchement)
+  let at = 0;
+  clips.forEach((c, i) => {
+    const td = c.transition !== 'cut' ? c.transitionDuration : 0;
+    const prev = clips[i - 1];
+    const ptd = prev && prev.transition !== 'cut' ? prev.transitionDuration : 0;
+    c.start = Math.max(0, Math.round((at - ptd / 2) * 100) / 100);
+    const base = c.duration;
+    c.duration = Math.round((base + ptd / 2 + (i < clips.length - 1 ? td / 2 : 0)) * 100) / 100;
+    at += base;
   });
   return clips;
 }

@@ -175,16 +175,33 @@ export function computeTimings(show: Show): ClipTiming[] {
 }
 
 export function trackTimings(clips: Clip[]): ClipTiming[] {
+  // position libre (clip.start) ; anciens projets : enchaînement avec chevauchement des transitions
   let t = 0;
-  return clips.map((clip, index) => {
-    const s = t;
-    t += clip.duration;
-    return { clip, start: s, end: t, index };
+  const out = clips.map((clip, index) => {
+    const s = clip.start ?? t;
+    const tm = { clip, start: s, end: s + clip.duration, index };
+    t = tm.end - (clip.start === undefined && clip.transition !== 'cut' ? Math.min(clip.transitionDuration, clip.duration / 2) : 0);
+    return tm;
   });
+  return out.sort((a, b) => a.start - b.start || a.index - b.index);
+}
+
+/** Fixe la position de chaque tableau (migration des anciens projets enchaînés). */
+export function freezeStarts(clips: Clip[]) {
+  for (const tm of trackTimings(clips)) tm.clip.start = Math.round(tm.start * 1000) / 1000;
+}
+
+/** Enchaîne les tableaux dans l'ordre de la liste, en superposant les transitions. */
+export function layoutSequential(clips: Clip[], from = 0) {
+  let t = from;
+  for (const c of clips) {
+    c.start = Math.round(t * 1000) / 1000;
+    t += c.duration - (c.transition !== 'cut' ? Math.min(c.transitionDuration, c.duration / 2) : 0);
+  }
 }
 
 export function trackDuration(clips: Clip[]) {
-  return clips.reduce((a, c) => a + c.duration, 0);
+  return trackTimings(clips).reduce((a, t) => Math.max(a, t.end), 0);
 }
 
 /** Durée totale : la plus longue des pistes. */
@@ -411,7 +428,7 @@ export class Renderer {
     p.f('uBeat', audio.beat).f('uBeatPhase', audio.beatPhase).f('uBeatIndex', audio.beatIndex).f('uEnergy', audio.energy);
     p.f('uRelief', show.master.relief).f('uSeed', seedFrom(clip.id)).f('uZoneCount', s.zoneCount);
     // valeurs par défaut des emplacements
-    p.f('uIntensity', 1).f('uSpeed', 1).v3('uColA', [1, 1, 1]).v3('uColB', [1, 1, 1]).f('uParamA', 0.5).f('uParamB', 0.5).f('uParamC', 0);
+    p.f('uIntensity', 1).f('uSpeed', 1).v3('uColA', [1, 1, 1]).v3('uColB', [1, 1, 1]).f('uParamA', 0.5).f('uParamB', 0.5).f('uParamC', 0).f('uParamD', 0).f('uParamE', 0).f('uParamF', 0).f('uParamG', 0);
     p.f('uTarget', 0).f('uTargetBg', 0).f('uReact', 0).f('uMirror', 0).f('uHue', 0).f('uSat', 1);
     for (const def of [...effect.params, ...COMMON_PARAMS]) {
       if (def.slot === 'aux') continue;
@@ -449,27 +466,30 @@ export class Renderer {
     this.draw(out);
   }
 
-  /** Rend une piste (suite de tableaux) à l'instant tt dans `out`. */
+  private blackClip: Clip = { id: '__noir', effect: 'vide', duration: 1, params: {}, transition: 'cut', transitionDuration: 0 };
+
+  /** Rend une piste à l'instant tt dans `out` : vide = noir, chevauchement = transition. */
   private renderTrack(clips: Clip[], tt: number, audio: AudioFrame, show: Show, out: Target) {
-    const timings = trackTimings(clips);
-    const total = timings.length ? timings[timings.length - 1].end : 0;
-    if (!timings.length || tt < 0 || tt >= total) return this.clearTarget(out);
-    let i = timings.findIndex((x) => tt >= x.start && tt < x.end);
-    if (i < 0) i = timings.length - 1;
-    const cur = timings[i];
-    const next = timings[i + 1];
-    const prev = timings[i - 1];
-    if (next) {
-      const td = Math.min(cur.clip.transitionDuration, cur.clip.duration, next.clip.duration);
-      if (cur.clip.transition !== 'cut' && td > 0 && tt > cur.end - td / 2)
-        return this.renderPair({ clip: cur.clip, local: tt - cur.start }, { clip: next.clip, local: tt - next.start }, (tt - (cur.end - td / 2)) / td, cur.clip.transition, audio, show, tt, out);
+    const tms = trackTimings(clips);
+    const act = tms.filter((x) => tt >= x.start && tt < x.end);
+    if (!act.length) return this.clearTarget(out);
+    if (act.length >= 2) {
+      const B = act[act.length - 1], A = act[act.length - 2];
+      const o0 = B.start, o1 = Math.min(A.end, B.end);
+      const m = (tt - o0) / Math.max(1e-3, o1 - o0);
+      return this.renderPair({ clip: A.clip, local: tt - A.start }, { clip: B.clip, local: tt - B.start }, m, A.clip.transition, audio, show, tt, out);
     }
-    if (prev) {
-      const td = Math.min(prev.clip.transitionDuration, prev.clip.duration, cur.clip.duration);
-      if (prev.clip.transition !== 'cut' && td > 0 && tt < cur.start + td / 2)
-        return this.renderPair({ clip: prev.clip, local: tt - prev.start }, { clip: cur.clip, local: tt - cur.start }, (tt - (cur.start - td / 2)) / td, prev.clip.transition, audio, show, tt, out);
+    const X = act[0];
+    const fade = X.clip.fade ?? 0.6;
+    let k = 1;
+    if (fade > 0) {
+      const before = tms.some((y) => y !== X && y.start < X.start && y.end >= X.start - 0.02);
+      const after = tms.some((y) => y !== X && y.start > X.start && y.start <= X.end + 0.02);
+      if (!before) k = Math.min(k, (tt - X.start) / fade);
+      if (!after) k = Math.min(k, (X.end - tt) / fade);
     }
-    this.renderClip(cur.clip, tt - cur.start, audio, show, tt, out);
+    if (k < 1) return this.renderPair({ clip: this.blackClip, local: 0 }, { clip: X.clip, local: tt - X.start }, Math.max(0, k), 'fondu', audio, show, tt, out);
+    this.renderClip(X.clip, tt - X.start, audio, show, tt, out);
   }
 
   private composite(base: Target, layer: Target, opacity: number, blend: string, out: Target) {
