@@ -9,7 +9,7 @@ import { SCENARIOS, compose, defaultShow, newClip } from './scenarios';
 import { TEMPLATES } from './templates';
 import { Clip, Layer, MediaItem, Project, Pt, ZONE_TYPES, ZoneTypeKey, uid, zoneType } from './types';
 import { History } from './history';
-import { paramAt, removeKey, setKey } from './keys';
+import { effectiveProgress, paramAt, removeKey, setKey } from './keys';
 import { QuadEditor, Tool, ZoneEditor } from './ui/editors';
 import { $, add, clear, fmtTime, h, icon, pickFile, select, slider, toast } from './ui/dom';
 import { Stage } from './ui/stage';
@@ -122,10 +122,29 @@ export class App {
     this.zoneEditor.onAi = (p, detail) => this.aiClick(p, detail);
     this.timeline = new Timeline({
       seek: (t) => this.seek(t),
-      select: (id) => {
-        this.selectedClip = id;
-        if (id) this.showTab = 'reglages';
+      select: (id, additive) => {
+        if (additive && id) {
+          if (!this.selectedClip) this.selectedClip = id;
+          else if (id === this.selectedClip) {
+            const next = [...this.multi][0] ?? null;
+            if (next) this.multi.delete(next);
+            this.selectedClip = next;
+          } else if (this.multi.has(id)) this.multi.delete(id);
+          else this.multi.add(id);
+        } else {
+          this.selectedClip = id;
+          this.multi.clear();
+          if (id) this.showTab = 'reglages';
+        }
         this.refreshShowUI();
+      },
+      moveMany: (ids, delta) => {
+        const fs = ids.map((i) => this.findClip(i)).filter((x): x is NonNullable<typeof x> => !!x);
+        const minStart = Math.min(...fs.map((f) => f.start));
+        const d = Math.max(-minStart, delta);
+        for (const f of fs) f.clip.start = Math.round((f.start + d) * 100) / 100;
+        this.refreshShowUI();
+        this.scheduleSave();
       },
       selectTrack: (tid) => {
         this.timeline.activeTrack = tid;
@@ -881,7 +900,7 @@ export class App {
     const list = found.list;
     const e = EFFECT_MAP.get(clip.effect)!;
     const idx = list.indexOf(clip);
-    const prog = Math.min(1, Math.max(0, (this.time - found.start) / clip.duration));
+    const prog = effectiveProgress(clip, this.time - found.start);
     const changed = () => {
       this.dirty = true;
       this.scheduleSave();
@@ -1189,6 +1208,8 @@ export class App {
   }
 
   refreshShowUI() {
+    this.timeline.multi = this.multi;
+    this.renderEditTools();
     this.timeline.setData(this.project.show, this.audio?.analysis ?? null, this.selectedClip);
     if (this.step === 'spectacle' || this.step === 'export') this.renderSide();
     this.updateGizmo();
@@ -1217,7 +1238,7 @@ export class App {
   private gizmoGeom() {
     const f = this.mediaClip();
     if (!f || !this.scene) return null;
-    const prog = Math.min(1, Math.max(0, (this.time - f.start) / f.clip.duration));
+    const prog = effectiveProgress(f.clip, this.time - f.start);
     const v = (k: string, d: number) => Number(paramAt(f.clip, k, prog, d));
     const boxA = this.scene.width / this.scene.height;
     const ma = this.mediaAspect(String(f.clip.params.media));
@@ -1620,6 +1641,110 @@ export class App {
     toast('Vides supprimés.', 'ok', 2000);
   }
 
+  // ── montage : sélection multiple, presse-papiers, coupe
+  multi = new Set<string>();
+  private clipboard: { track: string; clip: Clip; rel: number }[] = [];
+
+  selectedIds() {
+    return [this.selectedClip, ...this.multi].filter((x): x is string => !!x && !!this.findClip(x));
+  }
+
+  copySelection(silent = false) {
+    const fs = this.selectedIds().map((i) => this.findClip(i)!);
+    if (!fs.length) return false;
+    const t0 = Math.min(...fs.map((f) => f.start));
+    this.clipboard = fs.map((f) => ({ track: f.track, clip: structuredClone(f.clip), rel: f.start - t0 }));
+    if (!silent) toast(`${fs.length} tableau(x) copié(s).`, 'ok', 1800);
+    return true;
+  }
+
+  paste(at = this.time) {
+    if (!this.clipboard.length) return;
+    this.multi.clear();
+    let first: string | null = null;
+    for (const item of this.clipboard) {
+      const c: Clip = { ...structuredClone(item.clip), id: uid('c'), start: Math.round((at + item.rel) * 100) / 100 };
+      const exists = item.track === MAIN_TRACK || this.project.show.layers?.some((l) => l.id === item.track);
+      this.trackList(exists ? item.track : this.timeline.activeTrack).push(c);
+      if (!first) first = c.id;
+      else this.multi.add(c.id);
+    }
+    this.selectedClip = first;
+    this.refreshShowUI();
+    this.scheduleSave();
+  }
+
+  deleteSelection() {
+    for (const id of this.selectedIds()) {
+      const f = this.findClip(id);
+      if (f) f.list.splice(f.list.indexOf(f.clip), 1);
+    }
+    this.selectedClip = null;
+    this.multi.clear();
+    this.refreshShowUI();
+    this.scheduleSave();
+  }
+
+  duplicateSelection() {
+    const fs = this.selectedIds().map((i) => this.findClip(i)!);
+    if (!fs.length) return;
+    this.copySelection(true);
+    this.paste(Math.max(...fs.map((f) => f.start + f.clip.duration)));
+  }
+
+  /** Coupe en deux, à la tête de lecture, les tableaux sélectionnés (ou celui sous la tête sur la piste active). */
+  splitAtPlayhead() {
+    const t = this.time;
+    let fs = this.selectedIds().map((i) => this.findClip(i)!).filter((f) => t > f.start + 0.05 && t < f.start + f.clip.duration - 0.05);
+    if (!fs.length) {
+      const list = this.trackList(this.timeline.activeTrack);
+      const tm = trackTimings(list).filter((x) => t > x.start + 0.05 && t < x.end - 0.05).pop();
+      const f = tm ? this.findClip(tm.clip.id) : null;
+      fs = f ? [f] : [];
+    }
+    if (!fs.length) {
+      toast('Placez la tête de lecture sur un tableau pour le couper.', 'info');
+      return;
+    }
+    let lastB: string | null = null;
+    for (const f of fs) {
+      const c = f.clip;
+      const cut = c.cut ?? { t0: 0, p0: 0, p1: 1 };
+      const d1 = t - f.start;
+      const r = d1 / c.duration;
+      const pm = cut.p0 + r * (cut.p1 - cut.p0);
+      const B: Clip = { ...structuredClone(c), id: uid('c'), start: Math.round(t * 100) / 100, duration: Math.round((c.duration - d1) * 100) / 100, cut: { t0: cut.t0 + d1, p0: pm, p1: cut.p1 } };
+      c.duration = Math.round(d1 * 100) / 100;
+      c.cut = { t0: cut.t0, p0: cut.p0, p1: pm };
+      f.list.push(B);
+      lastB = B.id;
+    }
+    this.selectedClip = lastB;
+    this.multi.clear();
+    this.refreshShowUI();
+    this.scheduleSave();
+    toast(fs.length > 1 ? `${fs.length} tableaux coupés.` : 'Tableau coupé en deux.', 'ok', 1800);
+  }
+
+  selectAllOnTrack() {
+    const list = this.trackList(this.timeline.activeTrack);
+    if (!list.length) return;
+    this.selectedClip = list[0].id;
+    this.multi = new Set(list.slice(1).map((c) => c.id));
+    this.timeline.multi = this.multi;
+    this.refreshShowUI();
+  }
+
+  private renderEditTools() {
+    const sel = this.selectedIds().length;
+    clear(this.timeline.tools).append(
+      h('button', { class: 'btn icon', title: 'Couper à la tête de lecture (S)', onclick: () => this.splitAtPlayhead() }, icon('scissors')),
+      h('button', { class: 'btn icon', title: 'Copier (Ctrl+C)', disabled: !sel, onclick: () => this.copySelection() }, icon('copy')),
+      h('button', { class: 'btn icon', title: 'Coller à la tête de lecture (Ctrl+V)', disabled: !this.clipboard.length, onclick: () => this.paste() }, icon('paste')),
+      h('button', { class: 'btn icon', title: 'Supprimer la sélection (Suppr)', disabled: !sel, onclick: () => this.deleteSelection() }, icon('trash')),
+    );
+  }
+
   // ── annuler / rétablir
   undo() {
     const st = this.history.undo(this.project);
@@ -1637,6 +1762,7 @@ export class App {
     this.zoneEditor.zones = this.project.zones;
     if (this.zoneEditor.selected && !this.project.zones.some((z) => z.id === this.zoneEditor.selected)) this.zoneEditor.selected = null;
     if (this.selectedClip && !this.findClip(this.selectedClip)) this.selectedClip = null;
+    for (const id of [...this.multi]) if (!this.findClip(id)) this.multi.delete(id);
     if (zonesChanged) this.rebuildNow();
     this.timeline.setData(this.project.show, this.audio?.analysis ?? null, this.selectedClip);
     this.renderSide();
@@ -2375,7 +2501,22 @@ export class App {
         if (e.code === 'Space') {
           e.preventDefault();
           this.togglePlay();
-        } else if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedClip) this.deleteClip(this.selectedClip);
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') this.copySelection();
+        else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') {
+          if (this.copySelection(true)) this.deleteSelection();
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') this.paste();
+        else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+          e.preventDefault();
+          this.duplicateSelection();
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+          e.preventDefault();
+          this.selectAllOnTrack();
+        } else if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey) this.splitAtPlayhead();
+        else if (e.key === 'Escape') {
+          this.selectedClip = null;
+          this.multi.clear();
+          this.refreshShowUI();
+        } else if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedClip) this.deleteSelection();
         else if (e.key === 'Home') this.seek(0);
         else if (e.key === 'f') this.fullscreen();
       } else if (this.step === 'calques') {

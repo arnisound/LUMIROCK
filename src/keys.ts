@@ -47,3 +47,9 @@ export function removeKey(clip: Clip, key: string, index: number) {
   ks.splice(index, 1);
   if (ks.length === 0) delete clip.keys![key];
 }
+
+/** Avancement « réel » de l'animation (tient compte d'un tableau coupé en morceaux). */
+export function effectiveProgress(clip: Clip, local: number) {
+  const prog = Math.min(1, Math.max(0, local / clip.duration));
+  return clip.cut ? clip.cut.p0 + prog * (clip.cut.p1 - clip.cut.p0) : prog;
+}

@@ -327,3 +327,8 @@ details.card.adv[open] > summary::after { transform: rotate(90deg); }
 .tl-xfade { position: absolute; top: 15px; height: 58px; border-radius: 6px; background: repeating-linear-gradient(135deg, rgba(255,255,255,0.09) 0 3px, transparent 3px 9px); border-left: 1px dashed rgba(255,255,255,0.5); border-right: 1px dashed rgba(255,255,255,0.5); pointer-events: none; z-index: 3; }
 .tl-track.drop { background: rgba(224, 162, 62, 0.14); box-shadow: inset 0 0 0 1px var(--accent); }
 .tl-clip.dragging { z-index: 10; box-shadow: 0 8px 20px rgba(0,0,0,0.5); }
+
+.tl-clip.sel2 { box-shadow: 0 0 0 2px rgba(255,255,255,0.65), 0 0 14px -4px var(--c); z-index: 2; }
+
+.tl-tools { display: flex; gap: 4px; padding-left: 6px; border-left: 1px solid var(--line); }
+.tl-tools .btn.icon { width: 32px; height: 32px; padding: 6px; }

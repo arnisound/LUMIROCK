@@ -48,6 +48,7 @@ export interface Clip {
   keys?: Record<string, Keyframe[]>; // images clés par paramètre
   start?: number; // position libre sur la piste (secondes)
   fade?: number; // fondu d'entrée / sortie quand le tableau borde un vide (secondes)
+  cut?: { t0: number; p0: number; p1: number }; // morceau d'un tableau coupé : décalage de temps et plage d'avancement
 }
 
 export type BlendMode = 'add' | 'screen' | 'max';

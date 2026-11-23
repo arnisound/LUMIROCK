@@ -9,7 +9,8 @@ export const MAIN_TRACK = 'main';
 
 export interface TimelineEvents {
   seek: (t: number) => void;
-  select: (id: string | null) => void;
+  select: (id: string | null, additive?: boolean) => void;
+  moveMany: (ids: string[], delta: number) => void;
   selectTrack: (trackId: string) => void;
   move: (id: string, trackId: string, start: number, final: boolean) => void;
   trim: (id: string, start: number, duration: number, final: boolean) => void;
@@ -37,6 +38,7 @@ export class Timeline {
   private playBtn: HTMLButtonElement;
   private zoomInput: HTMLInputElement;
   extra = h('div', { class: 'tl-extra' });
+  tools = h('div', { class: 'tl-tools' });
   pps = 10;
   loop = true;
   snap = true;
@@ -44,6 +46,8 @@ export class Timeline {
   private show: Show | null = null;
   private analysis: AudioAnalysis | null = null;
   private selected: string | null = null;
+  /** sélection multiple (en plus de la sélection principale) */
+  multi = new Set<string>();
   private time = 0;
 
   constructor(private ev: TimelineEvents) {
@@ -75,6 +79,7 @@ export class Timeline {
         h('button', { class: 'btn icon', title: 'Revenir au début', onclick: () => ev.home() }, icon('home')),
         this.playBtn, this.timeLbl, loopBtn,
         h('button', { class: 'btn small', title: 'Ajouter une piste superposée (les lumières s’additionnent)', onclick: () => ev.addTrack() }, icon('plus'), 'Piste'),
+        this.tools,
         h('div', { class: 'spacer' }),
         this.extra,
         snapBtn,
@@ -251,7 +256,7 @@ export class Timeline {
       const el = h(
         'div',
         {
-          class: `tl-clip${tm.clip.id === this.selected ? ' sel' : ''}${tm.clip.effect === 'vide' ? ' empty' : ''}`,
+          class: `tl-clip${tm.clip.id === this.selected ? ' sel' : this.multi.has(tm.clip.id) ? ' sel2' : ''}${tm.clip.effect === 'vide' ? ' empty' : ''}`,
           style: `left:${8 + tm.start * this.pps}px;width:${Math.max(6, tm.clip.duration * this.pps - 1)}px;--c:${color}`,
           title: `${e?.name ?? tm.clip.effect} — ${tm.start.toFixed(1)} s → ${tm.end.toFixed(1)} s`,
         },
@@ -306,7 +311,9 @@ export class Timeline {
       el.addEventListener('pointerdown', (ev) => {
         el.setPointerCapture(ev.pointerId);
         this.ev.selectTrack(view.id);
-        el.classList.add('sel');
+        const additive = ev.ctrlKey || ev.metaKey || ev.shiftKey;
+        const group = (tm.clip.id === this.selected || this.multi.has(tm.clip.id)) && this.multi.size > 0 && !additive;
+        if (!additive) el.classList.add('sel');
         const x0 = ev.clientX;
         let moved = false;
         let target: HTMLElement | null = null;
@@ -320,9 +327,16 @@ export class Timeline {
           }
           return Math.round(Math.max(0, s) * 100) / 100;
         };
+        const groupEls = group ? [...this.tracks.querySelectorAll('.tl-clip.sel, .tl-clip.sel2')] as HTMLElement[] : [];
+        const groupLeft = groupEls.map((g) => parseFloat(g.style.left));
         const mv = (m: PointerEvent) => {
           if (Math.abs(m.clientX - x0) > 4 || Math.abs(m.clientY - ev.clientY) > 8) moved = true;
-          if (!moved) return;
+          if (!moved || additive) return;
+          if (group) {
+            const dx = (startAt(m) - tm.start) * this.pps;
+            groupEls.forEach((g, i) => (g.style.left = `${groupLeft[i] + dx}px`));
+            return;
+          }
           el.classList.add('dragging');
           el.style.left = `${8 + startAt(m) * this.pps}px`;
           const under = document.elementsFromPoint(m.clientX, m.clientY).find((x) => x.classList.contains('tl-track')) as HTMLElement | undefined;
@@ -335,11 +349,19 @@ export class Timeline {
         el.addEventListener('pointerup', (m) => {
           el.removeEventListener('pointermove', mv);
           target?.classList.remove('drop');
+          if (additive) {
+            this.ev.select(tm.clip.id, true);
+            return;
+          }
           if (!moved) {
             const r = this.content.getBoundingClientRect();
             this.selected = tm.clip.id;
             this.ev.seek(Math.max(0, (m.clientX - r.left - 8) / this.pps));
             this.ev.select(tm.clip.id);
+            return;
+          }
+          if (group) {
+            this.ev.moveMany([this.selected!, ...this.multi], startAt(m) - tm.start);
             return;
           }
           this.selected = tm.clip.id;

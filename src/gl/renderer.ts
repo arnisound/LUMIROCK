@@ -2,7 +2,7 @@ import { EFFECT_HEADER, EFFECT_FOOTER } from './common';
 import { FULLSCREEN_VS, Program, Target, createTarget, deleteTarget } from './glutil';
 import { COMMON_PARAMS, EFFECT_MAP, EffectDef, TRANSITIONS } from '../effects/library';
 import type { Clip, Show } from '../types';
-import { paramAt } from '../keys';
+import { effectiveProgress, paramAt } from '../keys';
 
 export interface SceneMaps {
   width: number;
@@ -417,14 +417,16 @@ export class Renderer {
     if (!effect || !this.scene) return;
     const p = this.program(effect).use();
     const s = this.scene;
-    const prog = Math.min(Math.max(local / clip.duration, 0), 1);
+    const prog = effectiveProgress(clip, local);
+    const t0 = clip.cut?.t0 ?? 0;
+    const fullDur = clip.cut ? clip.duration / Math.max(1e-3, clip.cut.p1 - clip.cut.p0) : clip.duration;
     p.tex('uAlbedo', 0, this.tex.albedo).tex('uDepth', 1, this.tex.depth).tex('uNormal', 2, this.tex.normal)
       .tex('uZones', 3, this.tex.zones).tex('uEdges', 4, this.tex.edges).tex('uZoneInfo', 5, this.tex.zoneInfo)
-      .tex('uAux', 6, this.auxFor(clip, local));
+      .tex('uAux', 6, this.auxFor(clip, local + t0));
     p.f('uAuxAspect', this.auxAspect);
     p.v2('uRes', target.w, target.h).v2('uZoneRes', s.width, s.height).f('uAspect', s.width / s.height);
-    const t = Math.max(local, 0);
-    p.f('uTime', time).f('uT', t).f('uP', prog).f('uDur', clip.duration).f('uQuality', this.quality);
+    const t = Math.max(local, 0) + t0;
+    p.f('uTime', time).f('uT', t).f('uP', prog).f('uDur', fullDur).f('uQuality', this.quality);
     p.f('uBeat', audio.beat).f('uBeatPhase', audio.beatPhase).f('uBeatIndex', audio.beatIndex).f('uEnergy', audio.energy);
     p.f('uRelief', show.master.relief).f('uSeed', seedFrom(clip.id)).f('uZoneCount', s.zoneCount);
     // valeurs par défaut des emplacements
