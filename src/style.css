@@ -425,3 +425,18 @@ header.top .steps { flex-shrink: 1; min-width: 0; }
 .sfx-add:hover, .sfx-play:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .sfx-play { width: 26px; border-left: 1px solid var(--line2) !important; opacity: .75; }
 .ex-music { color: var(--accent); }
+/* studio de mires */
+.mire-studio { position: fixed; inset: 0; z-index: 900; background: var(--bg, #0d1017); display: flex; flex-direction: column; }
+.mire-head { display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-bottom: 1px solid var(--line2); flex-wrap: wrap; }
+.mire-head > .row { margin-left: auto; gap: 6px; flex-wrap: wrap; }
+.mire-body { flex: 1; display: flex; min-height: 0; }
+.mire-controls { width: 340px; flex: none; overflow-y: auto; padding: 12px 14px 40px; border-right: 1px solid var(--line2); }
+.mire-view { flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; min-width: 0; background: #06080c; }
+.mire-canvas { max-width: 100%; max-height: 100%; box-shadow: 0 0 0 1px #333; }
+.mire-presets { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+.mire-sec { border: 1px solid var(--line2); border-radius: 10px; padding: 6px 10px; margin-bottom: 8px; }
+.mire-sec summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
+.mire-sec .check { margin: 6px 0; font-size: 12.5px; }
+.mire-color { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin: 6px 0; }
+.mire-color input { width: 34px; height: 24px; border: 0; padding: 0; background: none; }
+@media (max-width: 800px) { .mire-body { flex-direction: column-reverse; } .mire-controls { width: auto; border-right: 0; max-height: 50vh; } }

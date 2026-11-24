@@ -115,7 +115,17 @@ function polygonCentroid(pts: Pt[]) {
 
 export interface BuildOptions {
   aiDepth?: Float32Array | null; // profondeur IA (W*H, 0..1, 1 = proche)
+  lines?: LineStyle;
 }
+
+/** Tracé des contours utilisé par les tableaux (néon, dessin, étincelles…) et douceur du relief. */
+export interface LineStyle {
+  mode: 'calques' | 'photo' | 'mixte'; // lignes dessinées, vraies lignes de la photo autour des calques, ou les deux
+  width: number; // épaisseur (0.5 à 3)
+  soft: number; // douceur du relief des calques 0..1 (moins d'ombres anguleuses)
+}
+
+export const DEFAULT_LINES: LineStyle = { mode: 'mixte', width: 1, soft: 0.35 };
 
 /** Construit toutes les cartes envoyées au moteur de rendu. */
 export function buildScene(image: ImageData, zones: Zone[], opts: BuildOptions = {}): SceneMaps {
@@ -157,7 +167,8 @@ export function buildScene(image: ImageData, zones: Zone[], opts: BuildOptions =
     const id = ids[i];
     base[i] = id ? reliefOf[id - 1] : mask[i] || !hasSil ? 0.5 : 0.05;
   }
-  boxBlur(base, W, H, W * 0.004, 2);
+  const ls = { ...DEFAULT_LINES, ...(opts.lines ?? {}) };
+  boxBlur(base, W, H, W * (0.004 + ls.soft * 0.025), 2);
   const Lb = boxBlur(Float32Array.from(L), W, H, W * 0.01, 2);
   const depth = new Float32Array(N);
   let aiDetail: Float32Array | null = null;
@@ -219,7 +230,7 @@ export function buildScene(image: ImageData, zones: Zone[], opts: BuildOptions =
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, W, H);
   ctx.strokeStyle = '#fff';
-  ctx.lineWidth = Math.max(1.5, W / 650);
+  ctx.lineWidth = Math.max(1.2, (W / 650) * ls.width);
   ctx.lineJoin = 'round';
   for (const z of zones) {
     if (z.type === 'exclure') continue;
@@ -230,6 +241,15 @@ export function buildScene(image: ImageData, zones: Zone[], opts: BuildOptions =
   }
   const od = ctx.getImageData(0, 0, W, H).data;
   for (let i = 0; i < N; i++) outline[i] = od[i * 4] / 255;
+  if (ls.mode !== 'calques') {
+    // vraies lignes de l'architecture, seulement au voisinage des calques : elles épousent la pierre
+    const band = boxBlur(Float32Array.from(outline), W, H, W * 0.006, 2);
+    for (let i = 0; i < N; i++) {
+      const near = Math.min(1, band[i] * 6);
+      const photo = Math.min(1, edgeR[i] * 1.6) * near;
+      outline[i] = ls.mode === 'photo' ? photo : Math.max(photo, outline[i] * 0.55);
+    }
+  }
   const glowLines = boxBlur(Float32Array.from(outline), W, H, W * 0.008, 2);
   const openings = new Float32Array(N);
   const openingTypes = new Set(ZONE_TYPES.filter((t) => ['fenetre', 'porte', 'rosace', 'horloge'].includes(t.key)).map((t) => t.id));

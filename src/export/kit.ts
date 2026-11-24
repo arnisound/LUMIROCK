@@ -1,4 +1,5 @@
 // Kit pro : matière première pour After Effects, DaVinci Resolve / Fusion, Resolume, MadMapper, Modulo Pi.
+import { MIRE_DEFAULT, MIRE_PRESETS, drawMire } from './mire';
 import { zipSync } from 'fflate';
 import type { SceneMaps } from '../gl/renderer';
 import { rasterizeZones } from '../analysis/maps';
@@ -155,6 +156,9 @@ export async function buildKit(scene: SceneMaps, project: Project, onProgress?: 
   files['contours.svg'] = enc.encode(svgContours(project));
   files['gabarit_calage.png'] = await canvasToPng(drawTemplate(scene, project, false));
   files['gabarit_calage_noir.png'] = await canvasToPng(drawTemplate(scene, project, true));
+  files['mires/mire_calage_precis.png'] = await canvasToPng(drawMire(scene, project, { ...MIRE_DEFAULT, ...MIRE_PRESETS[0].o, size: 'facade' }));
+  files['mires/mire_relief.png'] = await canvasToPng(drawMire(scene, project, { ...MIRE_DEFAULT, ...MIRE_PRESETS[2].o, size: 'facade' }));
+  files['mires/mire_lignes_seules.png'] = await canvasToPng(drawMire(scene, project, { ...MIRE_DEFAULT, ...MIRE_PRESETS[3].o, size: 'facade' }));
   onProgress?.(0.5, 'Masques des calques…');
   const { ids, drawable } = rasterizeZones(project.zones, W, H);
   const colored = new Uint8Array(N * 4);

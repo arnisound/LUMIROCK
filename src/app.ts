@@ -2,9 +2,12 @@
 import { buildScene, MAX_WORK } from './analysis/maps';
 import { fitToWork, rectify } from './analysis/rectify';
 import { detectOpenings, findSimilar } from './analysis/detect';
+import { regularizeZones } from './analysis/regularize';
+import { DEFAULT_LINES } from './analysis/maps';
 import { AudioAnalysis, analyseAudio, audioFrameAt, decodeAudio } from './audio';
 import { CATEGORIES, CATEGORY_COLORS, COMMON_PARAMS, CustomFx, EFFECTS, EFFECT_MAP, ParamDef, TRANSITIONS, customEffectDef, registerCustom, unregisterCustom } from './effects/library';
 import { openFxEditor } from './ui/fxeditor';
+import { openMireStudio } from './ui/mirestudio';
 import { MidiController } from './midi';
 import { MOODS, MusicResult, fetchMusic, searchMusic } from './musiclib';
 import { SFX, renderSfx, toWav } from './sfx';
@@ -661,6 +664,26 @@ export class App {
   }
 
   /** Ouvre la sortie projecteur i en mode calage. */
+  private customMire: OffscreenCanvas | null = null;
+
+  openMires() {
+    if (!this.scene) {
+      toast('Chargez d’abord une façade.', 'err');
+      return;
+    }
+    openMireStudio({
+      scene: this.scene,
+      project: this.project,
+      projectOnOutput: (m) => {
+        this.customMire = m;
+        const any = this.outputs.some((o) => o && !o.win.closed);
+        if (!any) this.calibrateOutput(0);
+        else this.outputs.forEach((o) => o && !o.win.closed && o.warp.setCalibrating(true));
+        toast('Mire affichée sur la sortie projecteur (touche M pour basculer mire / spectacle).', 'ok', 6000);
+      },
+    });
+  }
+
   calibrateOutput(i = 0) {
     const o0 = this.outputs[i];
     if (!o0 || o0.win.closed) this.openOutput(i);
@@ -706,7 +729,7 @@ export class App {
       this.scheduleSave(false);
     }, () => {
       if (!this.scene) return null;
-      const m = drawTemplate(this.scene, this.project, true, Math.max(1, 1600 / this.scene.width));
+      const m = this.customMire ?? drawTemplate(this.scene, this.project, true, Math.max(1, 1600 / this.scene.width));
       const cv = w.document.createElement('canvas');
       cv.width = m.width;
       cv.height = m.height;
@@ -929,6 +952,7 @@ export class App {
       ...Array.from({ length: conf.count }, (_, i) => h('div', { class: 'row' },
         h('button', { class: 'btn ghost', onclick: () => this.openOutput(i) }, icon('screen'), conf.count > 1 ? `Sortie ${i + 1}` : 'Sortie projecteur'),
         h('button', { class: 'btn primary', onclick: () => this.calibrateOutput(i) }, 'Caler'),
+        h('button', { class: 'btn ghost', title: 'Choisir et projeter une mire de calage', onclick: () => this.openMires() }, '🎯'),
         h('button', { class: 'btn ghost', title: 'Réinitialiser le calage', onclick: () => this.resetCalibration(i) }, '↺'),
       )),
       conf.count > 1 ? h('p', { class: 'muted small' }, 'Chaque bouton ouvre une fenêtre (une par projecteur). Les zones de recouvrement sont fondues automatiquement pour que la jonction soit invisible.') : null,
@@ -1278,6 +1302,13 @@ export class App {
           this.scheduleRebuild();
         } }), 'Utiliser la profondeur IA') : null,
         h('p', { class: 'muted small' }, 'L’IA (Depth Anything V2) tourne dans votre navigateur : rien n’est envoyé sur Internet. Premier lancement : ~25 Mo à télécharger.'),
+      ),
+      h('div', { class: 'card' },
+        h('div', { class: 'card-title' }, '📐 Calques nets et lisibles'),
+        h('p', { class: 'muted small' }, 'Transforme les détourages approximatifs en formes d’architecte : rectangles bien droits, arcs symétriques, rosaces rondes, et aligne les fenêtres d’une même rangée et d’une même colonne. Annulable (Ctrl+Z).'),
+        h('button', { class: 'btn primary wide', onclick: () => this.regularize(false) }, '✨ Régulariser tous les calques'),
+        sel && sel.type !== 'silhouette' ? h('button', { class: 'btn ghost wide', onclick: () => this.regularize(true) }, `Régulariser seulement « ${sel.name} »`) : null,
+        this.linesControls(),
       ),
       h('div', { class: 'field' }, h('span', { class: 'lbl' }, 'Affichage'), mapSeg),
       selPanel,
@@ -2107,6 +2138,8 @@ export class App {
       this.scheduleSave();
     };
     add(b, this.paletteCard());
+    add(b, h('div', { class: 'card' }, h('div', { class: 'card-title' }, '📐 Lignes et relief des calques'), this.linesControls(),
+      h('button', { class: 'btn ghost wide', onclick: () => this.goto('calques') }, 'Régulariser les calques (étape Calques)')));
     add(b, 
       h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Nom du projet'), h('input', { type: 'text', value: this.project.name, oninput: (e: Event) => {
         this.project.name = (e.target as HTMLInputElement).value;
@@ -2182,6 +2215,7 @@ export class App {
         ),
         h('button', { class: 'btn ghost wide', onclick: () => this.runKitExport(progress) }, icon('download'), 'Télécharger le kit pro (.zip)'),
         h('div', { class: 'row' },
+          h('button', { class: 'btn primary', onclick: () => this.openMires() }, '🎯 Studio de mires'),
           h('button', { class: 'btn ghost', onclick: () => this.exportTemplate(true) }, 'Gabarit noir'),
           h('button', { class: 'btn ghost', onclick: () => this.exportTemplate(false) }, 'Gabarit photo'),
           h('button', { class: 'btn ghost', title: 'Capture de l’image affichée', onclick: () => this.snapshot() }, icon('camera')),
@@ -2538,6 +2572,40 @@ export class App {
       this.busy(null);
       this.aiBusy = false;
     }
+  }
+
+  regularize(onlySel: boolean) {
+    if (!this.facade) return;
+    const ids = onlySel && this.zoneEditor.selected ? new Set([this.zoneEditor.selected]) : undefined;
+    const { zones, changed } = regularizeZones(this.project.zones, this.facade.width, this.facade.height, ids);
+    if (!changed) {
+      toast('Rien à régulariser : les murs, toits, tours, statues et la silhouette gardent leur forme libre.', 'info', 5000);
+      return;
+    }
+    this.project.zones.splice(0, this.project.zones.length, ...zones);
+    this.zoneEditor.zones = this.project.zones;
+    this.zoneEditor.onChange?.(true);
+    this.renderSide();
+    toast(`${changed} calque(s) redessiné(s) et aligné(s). Ctrl+Z pour revenir en arrière.`, 'ok', 5000);
+  }
+
+  /** Tracé des contours vu dans les tableaux, et douceur du relief. */
+  private linesControls() {
+    const L = () => (this.project.lines ??= { ...DEFAULT_LINES });
+    const cur = { ...DEFAULT_LINES, ...(this.project.lines ?? {}) };
+    const ch = () => {
+      this.scheduleRebuild();
+      this.scheduleSave();
+    };
+    return h('div', {},
+      select<string>({ label: 'Lignes lumineuses des tableaux', value: cur.mode, options: [
+        { value: 'mixte', label: 'Lignes de la photo + calques (recommandé)' },
+        { value: 'photo', label: 'Uniquement les vraies lignes de la photo' },
+        { value: 'calques', label: 'Uniquement le tracé des calques' },
+      ], onChange: (v) => ((L().mode = v as 'mixte'), ch()) }),
+      slider({ label: 'Épaisseur des lignes', min: 0.5, max: 3, step: 0.1, value: cur.width, onInput: (v) => ((L().width = v), ch()) }),
+      slider({ label: 'Douceur du relief (moins d’ombres anguleuses)', min: 0, max: 1, step: 0.05, value: cur.soft, onInput: (v) => ((L().soft = v), ch()) }),
+    );
   }
 
   findSimilarZones(scope: 'row' | 'all' = 'row') {
@@ -3343,9 +3411,9 @@ export class App {
     }
     if (this.worker) {
       const id = ++this.workerReq;
-      this.worker.postMessage({ id, image: this.facade, zones: JSON.parse(JSON.stringify(this.project.zones)), aiDepth });
+      this.worker.postMessage({ id, image: this.facade, zones: JSON.parse(JSON.stringify(this.project.zones)), aiDepth, lines: this.project.lines });
     } else {
-      this.applyScene(buildScene(this.facade, this.project.zones, { aiDepth }));
+      this.applyScene(buildScene(this.facade, this.project.zones, { aiDepth, lines: this.project.lines }));
     }
   }
 

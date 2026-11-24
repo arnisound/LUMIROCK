@@ -122,6 +122,7 @@ export interface Project {
   outputs?: { count: number; overlap: number }; // plusieurs vidéoprojecteurs côte à côte
   schedule?: { on: boolean; start: string; end: string; days: number[]; preshow?: number }; // preshow : minuteur (min) avant le début // programmation horaire (HH:MM, jours 0 = dimanche)
   credits?: { title: string; author: string; license: string; page: string }; // photo de façade sous licence libre
+  lines?: { mode: 'calques' | 'photo' | 'mixte'; width: number; soft: number }; // tracé des contours et douceur du relief
   music?: { title: string; author: string; license: string; page: string }; // musique de la bibliothèque libre
   customFx?: { id: string; name: string; description: string; code: string }[]; // tableaux écrits en code
 }

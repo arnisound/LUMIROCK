@@ -28,6 +28,8 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 - **Mode live** : pads au clavier, tap tempo, noir, intensité ; **sortie projecteur** dans une 2e fenêtre.
 - **Plusieurs vidéoprojecteurs** côte à côte (2 à 4) avec fondu des bords et calage par sortie.
 - **Programmation horaire** : démarrage et arrêt automatiques chaque soir, en boucle, noir hors horaires.
+- **Calques nets** : régularisation en un clic (rectangles droits, arcs symétriques, rosaces rondes, alignement des rangées et colonnes) ; lignes lumineuses tirées des vraies arêtes de la photo ; relief adouci.
+- **Studio de mires de calage** : tracé des calques, vraies lignes de la façade, relief (ombrage, profondeurs, normales) en couleur au choix, grille avec coordonnées, repères en croix et équerres sur chaque calque, croix centrale, cadre et contour de la façade, étoiles de netteté, gammes de gris et couleurs ; 6 préréglages, résolution du projecteur (HD, WUXGA, 4K, sur mesure), export PNG, pack ZIP avec couches transparentes, projection directe sur la sortie.
 - **Calage du projecteur intégré** : 4 coins (perspective) puis grille 3×3 ou 5×5, mire de contours projetée, enregistré avec le projet — plus besoin de logiciel de mapping à côté.
 - **Réaction par bandes** : chaque tableau peut réagir aux basses, médiums ou aigus ; tableau « Égaliseur ».
 - **Montage** : sélection multiple, couper à la tête (S), copier / coller / dupliquer, déplacement groupé.
