@@ -1072,7 +1072,7 @@ export class App {
         show();
       } catch (e) {
         console.error(e);
-        status.textContent = 'Recherche impossible pour le moment (connexion ou limite de Wikimedia). Réessayez dans un instant.';
+        status.textContent = e instanceof Error && e.message.startsWith('Wikimedia') ? e.message : 'Recherche impossible pour le moment (connexion ou limite de Wikimedia). Réessayez dans un instant.';
       }
     };
     input.addEventListener('keydown', (e) => {
@@ -1091,9 +1091,25 @@ export class App {
   private async loadCommons(r: CommonsResult) {
     try {
       this.busy('Téléchargement de la photo…');
-      const resp = await fetch(r.url);
-      if (!resp.ok) throw new Error(String(resp.status));
-      const blob = await resp.blob();
+      let blob: Blob | null = null;
+      let last = '';
+      for (const u of r.urls?.length ? r.urls : [r.url]) {
+        try {
+          const resp = await fetch(u);
+          if (!resp.ok) {
+            last = String(resp.status);
+            continue;
+          }
+          const b = await resp.blob();
+          if (b.type.startsWith('image/') || b.size > 50000) {
+            blob = b;
+            break;
+          }
+        } catch (e) {
+          last = e instanceof Error ? e.message : 'réseau';
+        }
+      }
+      if (!blob) throw new Error(last || 'téléchargement impossible');
       await this.loadPhoto(new File([blob], `${r.title}.jpg`, { type: blob.type || 'image/jpeg' }));
       this.project.name = r.title.slice(0, 60);
       this.project.credits = { title: r.title, author: r.author, license: r.license, page: r.page };
@@ -1101,7 +1117,9 @@ export class App {
       toast(`Photo : ${r.author} — ${r.license}. Crédit conservé dans le projet.`, 'ok', 6000);
     } catch (e) {
       console.error(e);
-      toast('Impossible de télécharger cette photo.', 'err');
+      const msg = e instanceof Error && e.message === '429' ? 'Wikimedia limite les téléchargements : réessayez dans une minute.' : 'Impossible de télécharger cette photo directement.';
+      toast(`${msg} Vous pouvez aussi l’enregistrer depuis sa page Wikimedia puis l’importer.`, 'err', 8000);
+      window.open(r.page, '_blank', 'noopener');
     } finally {
       this.busy(null);
     }
