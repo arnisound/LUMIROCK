@@ -377,7 +377,8 @@ export class Renderer {
   private auxFor(clip: Clip, local: number): WebGLTexture {
     this.letterCount = 0;
     if (clip.effect === 'media') return this.mediaFor(clip, local);
-    const text = clip.params.text;
+    const dyn = EFFECT_MAP.get(clip.effect)?.dynText;
+    const text = dyn ? dyn(clip.params, local, clip.duration) : clip.params.text;
     if (typeof text !== 'string' || !this.scene) return this.blackTex;
     const y = Number(clip.params.y ?? 0.5);
     const size = Number(clip.params.size ?? 0.5);
@@ -399,8 +400,9 @@ export class Renderer {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, W, H);
     ctx.textBaseline = 'alphabetic';
-    const lines = text.split('\n');
-    let fs = (0.04 + size * 0.14) * H;
+    // une ligne « ~… » (texte calculé) est écrite à 45 % de la taille
+    const lines = text.split('\n').map((l) => (dyn && l.startsWith('~') ? { t: l.slice(1), k: 0.45 } : { t: l, k: 1 }));
+    let fs = (dyn ? 0.06 + size * 0.36 : 0.04 + size * 0.14) * H; // décomptes : chiffres géants
     const fontSpec = (px: number) => `${family.weight} ${px}px ${family.css}`;
     if (document.fonts && !document.fonts.check(fontSpec(40))) {
       document.fonts.load(fontSpec(40)).then(() => {
@@ -408,25 +410,33 @@ export class Renderer {
         this.onNeedRedraw?.();
       }).catch(() => undefined);
     }
-    ctx.font = fontSpec(fs);
-    const maxW = Math.max(...lines.map((l) => ctx.measureText(l).width));
-    if (maxW > W * 0.9) {
-      fs *= (W * 0.9) / maxW;
-      ctx.font = fontSpec(fs);
-    }
+    const maxW = Math.max(...lines.map((l) => {
+      ctx.font = fontSpec(fs * l.k);
+      let w = 0;
+      for (const ch of l.t) w += ctx.measureText(ch).width; // lettres posées une à une : même mesure qu'au dessin
+      return w;
+    }));
+    if (maxW > W * 0.86) fs *= (W * 0.86) / maxW;
     const cy = (1 - y) * H;
     const boxes = new Float32Array(256);
     let k = 0;
-    lines.forEach((l, li) => {
-      const base = cy + (li - (lines.length - 1) / 2) * fs * 1.15 + fs * 0.35;
-      let x = W / 2 - ctx.measureText(l).width / 2;
+    const heights = lines.map((l) => fs * l.k * 1.15);
+    const totalH = heights.reduce((a, b) => a + b, 0);
+    let acc = cy - totalH / 2;
+    lines.forEach((ln, li) => {
+      const l = ln.t;
+      const lfs = fs * ln.k;
+      ctx.font = fontSpec(lfs);
+      acc += heights[li];
+      const base = acc - heights[li] / 2 + lfs * 0.35;
+      let x = W / 2 - [...l].reduce((a, ch) => a + ctx.measureText(ch).width, 0) / 2;
       for (const ch of l) {
         const w = ctx.measureText(ch).width;
         if (ch.trim() && k < 254) {
           // rouge = forme, vert = numéro de lettre (rapport vert/rouge, robuste à l'anticrénelage)
           ctx.fillStyle = `rgb(255,${k + 1},0)`;
           ctx.fillText(ch, x, base);
-          if (k < 64) boxes.set([x / W - 0.004, 1 - (base + fs * 0.25) / H, (x + w) / W + 0.004, 1 - (base - fs * 0.95) / H], k * 4);
+          if (k < 64) boxes.set([x / W - 0.004, 1 - (base + lfs * 0.25) / H, (x + w) / W + 0.004, 1 - (base - lfs * 0.95) / H], k * 4);
           k++;
         }
         x += w;

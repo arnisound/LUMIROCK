@@ -18,7 +18,7 @@ export interface ParamDef {
   options?: { value: number; label: string }[];
 }
 
-export type Category = 'Lumière' | 'Console lumière' | 'Architecture' | 'Matières' | 'Nature' | 'Graphique' | 'Illusions' | 'Mes tableaux';
+export type Category = 'Lumière' | 'Console lumière' | 'Saisons et fêtes' | 'Architecture' | 'Matières' | 'Nature' | 'Graphique' | 'Illusions' | 'Mes tableaux';
 export type Mood = 'calme' | 'moyen' | 'fort';
 
 export interface EffectDef {
@@ -31,6 +31,8 @@ export interface EffectDef {
   params: ParamDef[];
   glsl: string;
   defaultDuration: number;
+  /** Texte calculé à chaque instant (décompte, minuteur) ; une ligne commençant par « ~ » est écrite en petit. */
+  dynText?: (params: Record<string, number | string | boolean>, t: number, dur: number) => string;
 }
 
 const I = (d = 1): ParamDef => ({ key: 'intensity', label: 'Intensité', type: 'range', slot: 'uIntensity', min: 0, max: 2, step: 0.01, default: d });
@@ -57,6 +59,61 @@ float unitRank(vec2 uv, out float count) {
 float unitX(vec2 uv) { int id = zoneId(uv); return id > 0 ? zoneGeom(id).x : uv.x; }
 float unitHash(vec2 uv) { int id = zoneId(uv); return id > 0 ? zoneMeta(id).x : hash11(floor(uv.x * 12.0) + 7.0); }
 vec3 stoneLit(vec2 uv) { return vec3(0.45 + 0.9 * lum(albedo(uv))); }
+`;
+
+const SDF = `
+// --- formes vectorielles (silhouettes)
+mat2 rot2(float a) { float c = cos(a), s = sin(a); return mat2(c, s, -s, c); }
+float dot2(vec2 v) { return dot(v, v); }
+float sdSeg(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h); }
+float sdBox(vec2 p, vec2 b) { vec2 d = abs(p) - b; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }
+float sdEll(vec2 p, vec2 r) { return (length(p / r) - 1.0) * min(r.x, r.y); }
+float sdTri(vec2 p, vec2 p0, vec2 p1, vec2 p2) {
+  vec2 e0 = p1 - p0, e1 = p2 - p1, e2 = p0 - p2;
+  vec2 v0 = p - p0, v1 = p - p1, v2 = p - p2;
+  vec2 q0 = v0 - e0 * clamp(dot(v0, e0) / dot(e0, e0), 0.0, 1.0);
+  vec2 q1 = v1 - e1 * clamp(dot(v1, e1) / dot(e1, e1), 0.0, 1.0);
+  vec2 q2 = v2 - e2 * clamp(dot(v2, e2) / dot(e2, e2), 0.0, 1.0);
+  float sg = sign(e0.x * e2.y - e0.y * e2.x);
+  vec2 d = min(min(vec2(dot(q0, q0), sg * (v0.x * e0.y - v0.y * e0.x)), vec2(dot(q1, q1), sg * (v1.x * e1.y - v1.y * e1.x))), vec2(dot(q2, q2), sg * (v2.x * e2.y - v2.y * e2.x)));
+  return -sqrt(d.x) * sign(d.y);
+}
+float smin(float a, float b, float k) { float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0); return mix(b, a, h) - k * h * (1.0 - h); }
+float sdHeart(vec2 p) {
+  p.x = abs(p.x);
+  if (p.y + p.x > 1.0) return sqrt(dot2(p - vec2(0.25, 0.75))) - sqrt(2.0) / 4.0;
+  return sqrt(min(dot2(p - vec2(0.0, 1.0)), dot2(p - 0.5 * max(p.x + p.y, 0.0)))) * sign(p.x - p.y);
+}
+float sdStar5(vec2 p, float r, float rf) {
+  const vec2 k1 = vec2(0.809016994375, -0.587785252292);
+  const vec2 k2 = vec2(-k1.x, k1.y);
+  p.x = abs(p.x);
+  p -= 2.0 * max(dot(k1, p), 0.0) * k1;
+  p -= 2.0 * max(dot(k2, p), 0.0) * k2;
+  p.x = abs(p.x);
+  p.y -= r;
+  vec2 ba = rf * vec2(-k1.y, k1.x) - vec2(0, 1);
+  float h = clamp(dot(p, ba) / dot(ba, ba), 0.0, r);
+  return length(p - ba * h) * sign(p.y * ba.x - p.x * ba.y);
+}
+float fillD(float d, float px) { return smoothstep(px, -px, d); }
+// ciel projeté sur la façade, avec lune
+vec3 skyMoon(vec2 uv, vec2 pa, vec3 sky, vec3 moon, vec2 mc, float mr) {
+  vec3 c = sky * (0.3 + 0.7 * uv.y);
+  float md = length(pa - mc);
+  float disc = smoothstep(mr, mr - 0.004, md);
+  c += moon * (disc * (1.25 - 0.35 * fbm((pa - mc) * 14.0)) + exp(-max(md - mr, 0.0) * 9.0) * 0.35 * (1.0 - disc));
+  return c;
+}
+// paillettes scintillantes
+float twinkle(vec2 pa, float scale, float dens) {
+  vec2 g = floor(pa * scale), f = fract(pa * scale) - 0.5;
+  float h = hash21(g);
+  if (h > dens) return 0.0;
+  vec2 o = (hash22(g + 3.1) - 0.5) * 0.6;
+  float d = length(f - o);
+  return smoothstep(0.12, 0.0, d) * (0.5 + 0.5 * sin(uT * (3.0 + h * 9.0) + h * 40.0));
+}
 `;
 
 export const EFFECTS: EffectDef[] = [
@@ -1739,6 +1796,630 @@ vec3 effect(vec2 uv) {
   return (uColA * bar * 1.6 + uColB * tr) * stoneLit(uv);
 }`,
   },
+  // ─────────────────────────── SAISONS ET FÊTES ───────────────────────────
+  {
+    id: 'traineau', name: 'Traîneau du Père Noël', category: 'Saisons et fêtes', mood: 'moyen', defaultDuration: 14,
+    description: 'Le traîneau et ses rennes au galop traversent le ciel devant la lune, en laissant une traînée d’étoiles.',
+    tags: ['noel'],
+    params: [I(), S(), CA('#ffe7a8', 'Lune / traînée'), CB('#1d3b7a', 'Ciel'), SEL('style', 'Rendu', 'uParamE', ['Silhouette sombre devant la lune', 'Silhouette lumineuse'], 0),
+      SEL('passes', 'Passages', 'uParamC', ['1 passage', '2 passages', '3 passages'], 0), R('alt', 'Hauteur de vol', 'uParamA', 0.6), R('size', 'Taille', 'uParamB', 0.5), TOG('snow', 'Neige', 'uParamD', true)],
+    glsl: HELPERS + SDF + `
+float deer(vec2 q, float ph) {
+  float d = sdEll(q, vec2(0.15, 0.065));
+  d = smin(d, sdSeg(q, vec2(0.11, 0.02), vec2(0.18, 0.11)) - 0.03, 0.02);
+  d = min(d, sdEll(q - vec2(0.215, 0.115), vec2(0.055, 0.03)));
+  d = min(d, sdSeg(q, vec2(0.19, 0.14), vec2(0.16, 0.24)) - 0.008);
+  d = min(d, sdSeg(q, vec2(0.172, 0.2), vec2(0.21, 0.25)) - 0.007);
+  d = min(d, sdSeg(q, vec2(0.165, 0.23), vec2(0.13, 0.26)) - 0.006);
+  d = min(d, sdSeg(q, vec2(0.205, 0.14), vec2(0.24, 0.22)) - 0.007);
+  float a = sin(ph), b = sin(ph + 1.6);
+  d = min(d, sdSeg(q, vec2(0.10, -0.03), vec2(0.10 + 0.08 * a, -0.15)) - 0.013);
+  d = min(d, sdSeg(q, vec2(0.07, -0.03), vec2(0.07 + 0.08 * b, -0.15)) - 0.013);
+  d = min(d, sdSeg(q, vec2(-0.10, -0.03), vec2(-0.10 - 0.08 * a, -0.15)) - 0.013);
+  d = min(d, sdSeg(q, vec2(-0.07, -0.03), vec2(-0.07 - 0.08 * b, -0.15)) - 0.013);
+  d = min(d, sdSeg(q, vec2(-0.14, 0.02), vec2(-0.18, 0.05)) - 0.015);
+  return d;
+}
+float sleigh(vec2 q) {
+  float d = sdBox(q - vec2(0.0, 0.02), vec2(0.24, 0.07)) - 0.02;
+  d = min(d, sdBox(q - vec2(-0.2, 0.1), vec2(0.06, 0.13)) - 0.02);
+  d = min(d, max(length(q - vec2(0.27, 0.08)) - 0.06, -(length(q - vec2(0.29, 0.13)) - 0.035)));
+  d = min(d, sdSeg(q, vec2(-0.32, -0.12), vec2(0.30, -0.12)) - 0.013);
+  d = min(d, sdSeg(q, vec2(0.30, -0.12), vec2(0.38, -0.04)) - 0.013);
+  d = min(d, sdSeg(q, vec2(-0.15, -0.12), vec2(-0.15, -0.04)) - 0.01);
+  d = min(d, sdSeg(q, vec2(0.15, -0.12), vec2(0.15, -0.04)) - 0.01);
+  d = min(d, sdEll(q - vec2(0.02, 0.14), vec2(0.09, 0.1)));
+  d = min(d, length(q - vec2(0.05, 0.27)) - 0.05);
+  d = min(d, sdTri(q, vec2(0.0, 0.3), vec2(0.1, 0.3), vec2(-0.06, 0.40)));
+  d = min(d, length(q - vec2(-0.07, 0.40)) - 0.022);
+  d = min(d, sdSeg(q, vec2(0.08, 0.17), vec2(0.17, 0.15)) - 0.02);
+  d = min(d, sdEll(q - vec2(-0.15, 0.2), vec2(0.09, 0.1)));
+  d = min(d, sdSeg(q, vec2(-0.15, 0.29), vec2(-0.13, 0.33)) - 0.015);
+  return d;
+}
+vec2 flyPath(float ph, float sc) {
+  return vec2(mix(-0.45 - 1.25 * sc, uAspect + 0.45, ph), uParamA * 0.6 + 0.2 + 0.16 * sin(ph * PI) - 0.08);
+}
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  float sc = 0.18 + uParamB * 0.5;
+  float passes = uParamC + 1.0;
+  float ph = fract(uP * passes);
+  vec2 P = flyPath(ph, sc);
+  vec2 P2 = flyPath(ph + 0.002, sc);
+  float ang = atan(P2.y - P.y, P2.x - P.x);
+  vec2 q = rot2(ang) * (pa - P) / sc;
+  q.y -= 0.01 * sin(uT * 7.0);
+  float gal = uT * uSpeed * 9.0;
+  float d = sleigh(q);
+  d = min(d, deer(q - vec2(0.68, 0.06), gal));
+  d = min(d, deer(q - vec2(1.04, 0.09), gal + 1.3));
+  d = min(d, deer(q - vec2(0.75, 0.13), gal + 0.6));
+  d = min(d, deer(q - vec2(1.11, 0.16), gal + 2.0));
+  d = min(d, sdSeg(q, vec2(0.17, 0.16), vec2(0.86, 0.13)) - 0.004);
+  d = min(d, sdSeg(q, vec2(0.86, 0.13), vec2(1.2, 0.16)) - 0.004);
+  float px = 1.5 / uRes.y / sc;
+  float shape = fillD(d, px);
+  float glow = exp(-max(d, 0.0) * 18.0);
+  // traînée d'étoiles derrière le traîneau
+  float trail = 0.0;
+  for (int i = 1; i < 36; i++) {
+    float fi = float(i);
+    float pp = ph - fi * 0.0045;
+    vec2 T = flyPath(pp, sc) + vec2(-0.32 * sc, -0.1 * sc);
+    T += (hash22(vec2(fi, floor(uT * 6.0))) - 0.5) * 0.035 * (1.0 + fi * 0.05);
+    trail += smoothstep(0.006 + 0.002 * hash11(fi), 0.0, length(pa - T)) * (1.0 - fi / 36.0);
+  }
+  vec3 bg;
+  if (uParamE < 0.5) {
+    bg = skyMoon(uv, pa, uColB, vec3(1.0, 0.97, 0.88), vec2(uAspect * 0.68, 0.7), 0.17);
+    bg *= 1.0 - shape;
+  } else {
+    bg = uColB * 0.15 * (0.4 + uv.y) + uColA * (shape * 1.3 + glow * 0.35);
+  }
+  bg += uColA * trail * 1.4;
+  if (uParamD > 0.5) {
+    vec2 sp = pa * vec2(18.0, 10.0) + vec2(sin(uT * 0.7) * 2.0, uT * 1.6);
+    bg += vec3(0.9) * smoothstep(0.08, 0.0, length(fract(sp) - 0.5 + (hash22(floor(sp)) - 0.5) * 0.5)) * step(0.6, hash21(floor(sp) + 9.0)) * 0.7;
+  }
+  bg += twinkle(pa, 40.0, 0.06) * 0.5 * step(0.55, uv.y);
+  return bg * stoneLit(uv);
+}`,
+  },
+  {
+    id: 'sorciere', name: 'Sorcière sur son balai', category: 'Saisons et fêtes', mood: 'moyen', defaultDuration: 14,
+    description: 'Une sorcière et son chat traversent la pleine lune sur un balai, entourées de chauves-souris.',
+    tags: ['halloween'],
+    params: [I(), S(), CA('#ffb347', 'Lune'), CB('#4b1d6e', 'Ciel'), SEL('style', 'Rendu', 'uParamE', ['Silhouette sombre devant la lune', 'Silhouette lumineuse'], 0),
+      SEL('passes', 'Passages', 'uParamC', ['1 passage', '2 passages', '3 passages'], 0), R('alt', 'Hauteur de vol', 'uParamA', 0.6), R('size', 'Taille', 'uParamB', 0.5), R('bats', 'Chauves-souris', 'uParamD', 0.6)],
+    glsl: HELPERS + SDF + `
+float witch(vec2 q, float t) {
+  float d = sdSeg(q, vec2(-0.42, 0.0), vec2(0.38, 0.04)) - 0.012;
+  float bx = clamp((q.x + 0.64) / 0.22, 0.0, 1.0);
+  float hh = mix(0.11, 0.022, bx) * (1.0 + 0.15 * sin(q.y * 90.0));
+  d = min(d, max(abs(q.y + 0.004) - hh, max(-0.64 - q.x, q.x + 0.41)));
+  d = min(d, sdSeg(q, vec2(-0.43, -0.025), vec2(-0.43, 0.03)) - 0.014);
+  float wav = sin(t * 9.0) * 0.025;
+  d = min(d, sdTri(q, vec2(-0.08, 0.02), vec2(0.09, 0.03), vec2(0.03, 0.23)));
+  d = min(d, sdTri(q, vec2(-0.06, 0.02), vec2(0.03, 0.21), vec2(-0.28, 0.07 + wav)));
+  d = min(d, length(q - vec2(0.05, 0.26)) - 0.045);
+  d = min(d, sdTri(q, vec2(0.085, 0.275), vec2(0.085, 0.25), vec2(0.135, 0.245)));
+  d = min(d, sdSeg(q, vec2(-0.04, 0.30), vec2(0.13, 0.315)) - 0.01);
+  d = min(d, sdTri(q, vec2(-0.01, 0.30), vec2(0.09, 0.312), vec2(-0.08, 0.48 + wav * 0.5)));
+  d = min(d, sdSeg(q, vec2(0.04, 0.17), vec2(0.15, 0.06)) - 0.014);
+  d = min(d, sdSeg(q, vec2(0.03, 0.03), vec2(0.11, -0.07)) - 0.016);
+  d = min(d, sdSeg(q, vec2(0.11, -0.07), vec2(0.155, -0.06)) - 0.013);
+  d = min(d, sdSeg(q, vec2(0.02, 0.27), vec2(-0.07, 0.17 + wav)) - 0.012);
+  vec2 c = q - vec2(-0.29, 0.055);
+  d = min(d, sdEll(c, vec2(0.045, 0.032)));
+  d = min(d, length(c - vec2(0.035, 0.04)) - 0.024);
+  d = min(d, sdTri(c, vec2(0.016, 0.055), vec2(0.032, 0.06), vec2(0.018, 0.088)));
+  d = min(d, sdTri(c, vec2(0.04, 0.062), vec2(0.056, 0.055), vec2(0.058, 0.088)));
+  d = min(d, sdSeg(c, vec2(-0.04, 0.0), vec2(-0.075, 0.05 + 0.02 * sin(t * 4.0))) - 0.008);
+  return d;
+}
+float bat(vec2 q, float t) {
+  float f = sin(t * 18.0);
+  float d = sdEll(q, vec2(0.03, 0.02));
+  vec2 m = vec2(abs(q.x), q.y);
+  d = min(d, sdTri(m, vec2(0.01, 0.01), vec2(0.1, 0.03 + f * 0.05), vec2(0.06, -0.02 + f * 0.02)));
+  d = min(d, sdTri(m, vec2(0.0, 0.015), vec2(0.012, 0.045), vec2(0.02, 0.012)));
+  return d;
+}
+vec2 witchPath(float ph, float sc) {
+  return vec2(mix(-0.4 - 0.7 * sc, uAspect + 0.75 * sc + 0.4, ph), uParamA * 0.55 + 0.22 + 0.06 * sin(ph * TAU * 1.5));
+}
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  float sc = 0.2 + uParamB * 0.55;
+  float ph = fract(uP * (uParamC + 1.0));
+  vec2 P = witchPath(ph, sc), P2 = witchPath(ph + 0.002, sc);
+  float ang = atan(P2.y - P.y, P2.x - P.x) * 0.6 + 0.05 * sin(uT * 2.0);
+  vec2 q = rot2(ang) * (pa - P) / sc;
+  float d = witch(q, uT * uSpeed);
+  float px = 1.5 / uRes.y / sc;
+  int NB = int(uParamD * 8.0);
+  for (int i = 0; i < 8; i++) {
+    if (i >= NB) break;
+    float fi = float(i);
+    vec2 B = vec2(uAspect * (0.15 + 0.7 * hash11(fi * 3.1)) + 0.12 * sin(uT * (0.6 + hash11(fi) * 0.8) + fi), 0.55 + 0.35 * hash11(fi * 7.7) + 0.07 * sin(uT * 1.3 + fi * 2.0));
+    d = min(d, bat((pa - B) / (sc * 0.55), uT * uSpeed + fi) * sc * 0.55 / sc);
+  }
+  float shape = fillD(d, px);
+  float glow = exp(-max(d, 0.0) * 16.0);
+  vec2 mc = vec2(uAspect * 0.5, uParamA * 0.55 + 0.27);
+  vec3 c;
+  if (uParamE < 0.5) {
+    c = skyMoon(uv, pa, uColB, uColA * 1.1, mc, 0.2 + uParamB * 0.1);
+    c *= 1.0 - shape;
+  } else c = uColB * 0.2 * (0.4 + uv.y) + vec3(0.6, 1.0, 0.35) * (shape * 1.3 + glow * 0.4);
+  c += twinkle(pa, 34.0, 0.05) * 0.4 * uColA;
+  return c * stoneLit(uv);
+}`,
+  },
+  {
+    id: 'decompte', name: 'Décompte du Nouvel An', category: 'Saisons et fêtes', mood: 'fort', defaultDuration: 22,
+    description: 'Un compte à rebours géant qui pulse à chaque seconde, puis explosion de feux d’artifice et votre message de vœux à zéro.',
+    tags: ['noel', 'national'],
+    params: [
+      { key: 'text', label: 'Message à zéro', type: 'text', slot: 'aux', default: 'Bonne année !' },
+      SEL('count', 'Décompte depuis', 'uParamC', ['10', '5', '3', '30', '60'], 0),
+      SEL('font', 'Police', 'aux', ['Classique (Cinzel)', 'Gothique', 'Manuscrite', 'Affiche', 'Moderne'], 3),
+      I(), CA('#ffe08a', 'Chiffres'), CB('#ff3355', 'Dernières secondes'), R('y', 'Position verticale', 'uParamA', 0.5), R('size', 'Taille', 'uParamB', 0.8)],
+    dynText: (p, t) => {
+      const n = [10, 5, 3, 30, 60][Number(p.count ?? 0)] ?? 10;
+      const r = Math.ceil(n - t - 1e-6);
+      return r > 0 ? String(r) : String(p.text ?? '');
+    },
+    glsl: HELPERS + SDF + `
+float txt(vec2 uv) { return texture(uAux, uv).r; }
+vec3 effect(vec2 uv) {
+  float N = int(uParamC + 0.5) == 0 ? 10.0 : int(uParamC + 0.5) == 1 ? 5.0 : int(uParamC + 0.5) == 2 ? 3.0 : int(uParamC + 0.5) == 3 ? 30.0 : 60.0;
+  vec2 pa = asp(uv);
+  vec2 c0 = vec2(0.5, uParamA);
+  float rem = N - uT;
+  vec3 col;
+  if (rem > 0.0) {
+    float fr = fract(uT);
+    float s = 1.0 + 0.45 * exp(-fr * 7.0);
+    vec2 su = c0 + (uv - c0) / s;
+    float m = txt(su);
+    float last = step(rem, 3.0);
+    vec3 dc = mix(uColA, uColB, last);
+    float flash = exp(-fr * 5.0);
+    // anneau qui se vide pendant la seconde
+    vec2 d = pa - asp(c0);
+    float r = length(d), R0 = 0.22 + uParamB * 0.12;
+    float a = fract(atan(d.x, d.y) / TAU + 1.0);
+    float ring = smoothstep(0.012, 0.0, abs(r - R0)) * step(a, 1.0 - fr);
+    col = dc * (m * (1.3 + flash) + ring * 1.2 + exp(-abs(r - R0) * 30.0) * 0.25 * (1.0 - fr));
+    col += dc * 0.1 * flash * stoneLit(uv);
+  } else {
+    float lt = -rem;
+    col = vec3(1.0) * exp(-lt * 3.0) * 1.5;
+    col += mix(uColA, vec3(1.0), 0.3) * txt(uv) * (1.0 + 0.3 * sin(uT * 6.0)) * smoothstep(0.0, 0.6, lt);
+    for (int i = 0; i < 6; i++) {
+      float fi = float(i);
+      float P = 2.2;
+      float tt = lt + fi * P / 6.0;
+      float cyc = floor(tt / P), l2 = mod(tt, P);
+      vec2 cp = asp(vec2(0.1 + hash21(vec2(cyc, fi)) * 0.8, 0.5 + hash21(vec2(fi, cyc + 3.0)) * 0.45));
+      vec3 fc = hsv(hash21(vec2(cyc * 1.3, fi * 2.1)), 0.85, 1.0);
+      float rad = l2 * 0.16 * (1.0 - l2 * 0.12);
+      for (int k = 0; k < 16; k++) {
+        float fk = float(k);
+        float an = fk / 16.0 * TAU + hash11(cyc + fi);
+        vec2 pp = cp + vec2(cos(an), sin(an)) * rad - vec2(0.0, l2 * l2 * 0.02);
+        col += fc * smoothstep(0.009, 0.0, length(pa - pp)) * exp(-l2 * 1.4) * 1.5;
+      }
+      col += fc * exp(-l2 * 3.0) * 0.35 * exp(-length(pa - cp) * 2.5) * stoneLit(uv);
+    }
+  }
+  return col;
+}`,
+  },
+  {
+    id: 'lapin', name: 'Lapin de Pâques', category: 'Saisons et fêtes', mood: 'calme', defaultDuration: 14,
+    description: 'Un lapin traverse la façade en sautant et dépose un œuf décoré à chaque bond.',
+    tags: ['saisons'],
+    params: [I(), S(), CA('#ffffff', 'Lapin'), CB('#c8f5c8', 'Fond printanier'), R('ground', 'Hauteur du sol', 'uParamA', 0.1), R('size', 'Taille', 'uParamB', 0.65), R('bg', 'Lumière de fond', 'uParamC', 0.35)],
+    glsl: HELPERS + SDF + `
+float bunny(vec2 q, float sq, float ear) {
+  q.y /= sq;
+  float d = sdEll(q - vec2(0.0, 0.11), vec2(0.15, 0.11));
+  d = smin(d, length(q - vec2(0.15, 0.21)) - 0.075, 0.03);
+  vec2 e1 = rot2(-0.25 - ear) * (q - vec2(0.16, 0.26));
+  d = min(d, sdEll(e1 - vec2(0.0, 0.1), vec2(0.028, 0.1)));
+  vec2 e2 = rot2(0.05 - ear * 0.7) * (q - vec2(0.12, 0.26));
+  d = min(d, sdEll(e2 - vec2(0.0, 0.09), vec2(0.026, 0.09)));
+  d = min(d, length(q - vec2(-0.16, 0.15)) - 0.042);
+  d = min(d, sdEll(q - vec2(-0.05, 0.01), vec2(0.1, 0.03)));
+  d = min(d, sdSeg(q, vec2(0.1, 0.06), vec2(0.14, 0.0)) - 0.02);
+  return d * sq;
+}
+vec3 egg(vec2 q, float sz, float h) {
+  float d = sdEll(q - vec2(0.0, sz * 1.3), vec2(sz, sz * 1.35));
+  if (d > 0.0) return vec3(0.0);
+  vec3 c1 = hsv(h, 0.55, 1.0), c2 = hsv(fract(h + 0.4), 0.6, 1.0);
+  float st = step(0.5, fract(q.y / sz * 2.2 + sin(q.x / sz * 6.0) * 0.15 * step(0.5, fract(h * 7.0))));
+  vec3 c = mix(c1, c2, st);
+  float dots = step(length(fract(q / sz * 2.5) - 0.5), 0.18) * step(0.6, fract(h * 13.0));
+  return mix(c, vec3(1.0), dots) * smoothstep(0.0, -0.004, d);
+}
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  float sc = 0.15 + uParamB * 0.45;
+  float P = 0.9 / uSpeed;
+  float hop = uT / P;
+  float n = floor(hop), f = fract(hop);
+  float L = 0.42 * sc;
+  float span = uAspect + 0.6;
+  float x = mod(hop * L, span) - 0.3;
+  float jump = 4.0 * f * (1.0 - f);
+  float gy = uParamA;
+  float sq = f < 0.12 ? mix(0.8, 1.0, f / 0.12) : f > 0.9 ? mix(1.0, 0.85, (f - 0.9) / 0.1) : 1.06;
+  vec2 q = (pa - vec2(x, gy + jump * 0.22 * sc)) / sc;
+  q = rot2(-0.25 * (0.5 - f) * step(0.12, f)) * q;
+  float d = bunny(q, sq, jump * 0.4);
+  float px = 1.5 / uRes.y / sc;
+  vec3 c = uColB * uParamC * (0.5 + 0.5 * uv.y) * stoneLit(uv);
+  c *= 1.0 - fillD(d, px) * 0.6;
+  c += uColA * (fillD(d, px) * 1.3 + exp(-max(d, 0.0) * 14.0) * 0.3) * stoneLit(uv);
+  for (int k = 1; k < 14; k++) {
+    float nk = n - float(k) + 1.0;
+    if (nk < 0.0) break;
+    float ex = mod(nk * L, span) - 0.3 - 0.05 * sc;
+    float age = (hop - nk) * P;
+    float grow = smoothstep(0.0, 0.35, age);
+    c += egg(pa - vec2(ex, gy - 0.01), 0.05 * sc * grow + 1e-4, hash11(nk * 1.37)) * 1.2 * stoneLit(uv);
+  }
+  return c;
+}`,
+  },
+  {
+    id: 'surf', name: 'Surf au coucher du soleil', category: 'Saisons et fêtes', mood: 'moyen', defaultDuration: 16,
+    description: 'La mer monte sur la façade, un surfeur glisse sur les vagues devant le soleil couchant, les mouettes passent.',
+    tags: ['saisons'],
+    params: [I(), S(), CA('#1e6fd9', 'Mer'), CB('#ff7a59', 'Ciel couchant'), R('sea', 'Niveau de la mer', 'uParamA', 0.35), R('size', 'Taille du surfeur', 'uParamB', 0.45), R('wave', 'Houle', 'uParamC', 0.5)],
+    glsl: HELPERS + SDF + `
+float surfer(vec2 q, float t) {
+  float d = sdEll(q, vec2(0.17, 0.018));
+  float k = 0.025 * sin(t * 2.5);
+  d = min(d, sdSeg(q, vec2(-0.05, 0.012), vec2(-0.01, 0.09)) - 0.016);
+  d = min(d, sdSeg(q, vec2(0.06, 0.012), vec2(0.025, 0.09)) - 0.016);
+  d = min(d, sdSeg(q, vec2(0.005, 0.09), vec2(0.015 + k, 0.19)) - 0.022);
+  d = min(d, length(q - vec2(0.02 + k, 0.228)) - 0.028);
+  d = min(d, sdSeg(q, vec2(0.01 + k, 0.17), vec2(-0.1, 0.13 + k)) - 0.011);
+  d = min(d, sdSeg(q, vec2(0.01 + k, 0.17), vec2(0.12, 0.17 - k)) - 0.011);
+  return d;
+}
+float seaY(float x, float t) {
+  float A = 0.02 + uParamC * 0.06;
+  return uParamA + A * sin(x * 5.0 - t * 1.6) + A * 0.5 * sin(x * 11.0 + t * 2.3) + 0.4 * A * sin(x * 23.0 - t * 3.1);
+}
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  float t = uT * uSpeed;
+  float hz = uParamA + 0.08;
+  vec3 sky = mix(uColB, vec3(0.35, 0.2, 0.55), smoothstep(hz, 1.0, uv.y));
+  vec2 sc = vec2(uAspect * 0.62, hz + 0.06);
+  float sd = length(pa - sc);
+  sky += vec3(1.0, 0.85, 0.5) * (smoothstep(0.11, 0.105, sd) * 1.2 + exp(-sd * 5.0) * 0.4);
+  float sy = seaY(pa.x, t);
+  vec3 c;
+  if (pa.y > sy) c = sky;
+  else {
+    float depth = sy - pa.y;
+    c = mix(uColA * 1.1, uColA * 0.35, smoothstep(0.0, 0.3, depth));
+    c += vec3(1.0, 0.8, 0.5) * exp(-abs(pa.x - sc.x) * 12.0) * (0.5 + 0.5 * sin(pa.y * 140.0 + t * 4.0)) * 0.5 * exp(-depth * 4.0);
+    float foam = smoothstep(0.012, 0.0, depth) + smoothstep(0.55, 0.9, vnoise(vec2(pa.x * 30.0 - t * 2.0, depth * 60.0))) * exp(-depth * 25.0);
+    c += vec3(1.0) * foam;
+  }
+  // surfeur
+  float s = 0.12 + uParamB * 0.35;
+  float xs = uAspect * (0.5 + 0.32 * sin(t * 0.35)) ;
+  float ys = seaY(xs, t);
+  float sl = (seaY(xs + 0.01, t) - ys) / 0.01;
+  vec2 q = rot2(atan(sl) * 0.8) * (pa - vec2(xs, ys + 0.004)) / s;
+  q.x *= cos(t * 0.35) > 0.0 ? 1.0 : -1.0;
+  float d = surfer(q, t);
+  float m = fillD(d, 1.5 / uRes.y / s);
+  c *= 1.0 - m * 0.95;
+  // mouettes
+  for (int i = 0; i < 4; i++) {
+    float fi = float(i);
+    vec2 g = vec2(mod(t * (0.05 + 0.02 * fi) + fi * 0.7, uAspect + 0.4) - 0.2, 0.72 + 0.18 * hash11(fi) + 0.02 * sin(t + fi));
+    vec2 gq = (pa - g) / 0.03;
+    float fl = 0.35 * sin(t * 6.0 + fi);
+    vec2 ga = vec2(abs(gq.x), gq.y);
+    float gd = sdSeg(ga, vec2(0.0), vec2(0.6, 0.25 + fl)) - 0.06;
+    c *= 1.0 - fillD(gd * 0.03, 1.5 / uRes.y) * 0.9;
+  }
+  return c * stoneLit(uv);
+}`,
+  },
+  {
+    id: 'feuilles', name: 'Feuilles d’automne', category: 'Saisons et fêtes', mood: 'calme', defaultDuration: 16,
+    description: 'Des feuilles d’érable et de chêne tombent en tourbillonnant, poussées par le vent, et s’amoncellent au pied du monument.',
+    tags: ['saisons', 'patrimoine'],
+    params: [I(), S(), CA('#ff8a1e', 'Feuilles'), CB('#7a2a10', 'Fond'), R('count', 'Nombre de feuilles', 'uParamA', 0.6), R('wind', 'Vent', 'uParamB', 0.4), R('size', 'Taille', 'uParamC', 0.4), TOG('pile', 'Tas de feuilles', 'uParamD', true)],
+    glsl: HELPERS + SDF + `
+float leafD(vec2 q, float kind) {
+  if (kind < 0.5) {
+    float a = atan(q.x, q.y);
+    float r = 0.05 * (0.55 + 0.45 * pow(abs(cos(a * 2.5)), 0.5)) * (1.0 - 0.25 * smoothstep(1.8, 3.1, abs(a)));
+    float d = length(q) - r;
+    d = min(d, sdSeg(q, vec2(0.0, 0.0), vec2(0.0, -0.065)) - 0.003);
+    return d;
+  }
+  float w = 0.026 * (1.0 + 0.18 * sin(q.y * 140.0));
+  float d = sdEll(q, vec2(w, 0.055));
+  return min(d, sdSeg(q, vec2(0.0, -0.05), vec2(0.0, -0.07)) - 0.003);
+}
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  float t = uT * uSpeed;
+  vec3 c = uColB * 0.18 * stoneLit(uv);
+  int N = 8 + int(uParamA * 40.0);
+  float sz = 0.5 + uParamC * 1.6;
+  for (int i = 0; i < 48; i++) {
+    if (i >= N) break;
+    float fi = float(i);
+    float h = hash11(fi * 1.71);
+    float sp = 0.06 + 0.06 * hash11(fi * 3.3);
+    float y = 1.15 - fract(t * sp + h) * 1.3;
+    float x = mod(hash11(fi * 5.1) * (uAspect + 0.4) + 0.07 * sin(t * (0.8 + h) + fi) + uParamB * 0.25 * (1.15 - y) * 2.0, uAspect + 0.4) - 0.2;
+    vec2 q = pa - vec2(x, y);
+    if (dot(q, q) > 0.02 * sz * sz) continue;
+    float ang = t * (1.0 + 2.0 * h) * (h > 0.5 ? 1.0 : -1.0) + fi;
+    q = rot2(ang) * q / sz;
+    q.x /= 0.4 + 0.6 * abs(cos(t * (1.5 + h) + fi));
+    float d = leafD(q, step(0.6, h));
+    float m = fillD(d, 1.5 / uRes.y / sz);
+    vec3 lc = mix(uColA, hsv(0.0 + 0.12 * hash11(fi * 9.3), 0.9, 1.0), 0.6) * (0.8 + 0.4 * (q.x * 10.0 + 0.5));
+    c = mix(c, lc * 1.2 * stoneLit(uv), m);
+  }
+  if (uParamD > 0.5) {
+    float hgt = (0.02 + 0.1 * uP) * (0.6 + 0.6 * fbm(vec2(pa.x * 9.0, 1.0)));
+    float pile = smoothstep(hgt, hgt - 0.01, uv.y);
+    vec3 pc = mix(uColA, hsv(0.02 + 0.1 * vnoise(pa * 90.0), 0.9, 0.9), 0.6) * (0.5 + 0.7 * vnoise(pa * 160.0));
+    c = mix(c, pc * stoneLit(uv), pile);
+  }
+  return c;
+}`,
+  },
+  {
+    id: 'citrouilles', name: 'Fenêtres citrouilles', category: 'Saisons et fêtes', mood: 'moyen', defaultDuration: 12,
+    description: 'Chaque fenêtre et porte devient une citrouille d’Halloween qui s’allume une à une, avec la flamme qui vacille.',
+    tags: ['halloween'],
+    params: [I(), S(), CA('#ff8a1e', 'Lueur'), CB('#4b1d6e', 'Mur'), R('wall', 'Lumière sur les murs', 'uParamA', 0.3), R('fl', 'Vacillement', 'uParamB', 0.6)],
+    glsl: HELPERS + SDF + `
+vec3 effect(vec2 uv) {
+  int id = zoneId(uv);
+  int ty = zoneTypeAt(uv);
+  vec3 wall = uColB * uParamA * (0.5 + 0.8 * lum(albedo(uv)));
+  if (id == 0 || !isOpening(ty)) return wall;
+  vec4 g = zoneGeom(id);
+  vec4 mt = zoneMeta(id);
+  float on = smoothstep(mt.y * 0.75, mt.y * 0.75 + 0.06, uP);
+  vec2 z = (uv - g.xy) / g.zw;
+  vec2 p = vec2(abs(z.x), z.y);
+  float d = sdTri(p, vec2(0.06, 0.06), vec2(0.36, 0.06), vec2(0.2, 0.3));
+  d = min(d, sdTri(z, vec2(-0.07, -0.06), vec2(0.07, -0.06), vec2(0.0, 0.05)));
+  float mouth = max(sdEll(z - vec2(0.0, -0.1), vec2(0.4, 0.24)), -sdEll(z - vec2(0.0, 0.0), vec2(0.46, 0.22)));
+  mouth = max(mouth, -sdBox(p - vec2(0.13, -0.2), vec2(0.045, 0.05)));
+  mouth = max(mouth, -sdBox(z - vec2(0.0, -0.33), vec2(0.05, 0.05)));
+  d = min(d, mouth);
+  float fl = 1.0 - uParamB * 0.45 * (vnoise(vec2(uT * uSpeed * 8.0, mt.x * 40.0)) * 0.7 + 0.3 * sin(uT * 23.0 + mt.x * 9.0));
+  float face = fillD(d, 0.01);
+  vec3 c = uColA * on * (face * 1.6 * fl + 0.12 * fl);
+  c += vec3(1.0, 0.85, 0.4) * on * face * exp(-length(z) * 3.0) * 0.6 * fl;
+  return c + wall * 0.5;
+}`,
+  },
+  {
+    id: 'avent', name: 'Calendrier de l’Avent', category: 'Saisons et fêtes', mood: 'calme', defaultDuration: 20,
+    description: 'Les fenêtres s’ouvrent une à une comme les cases d’un calendrier de l’Avent et révèlent étoiles, cadeaux, sapins et boules.',
+    tags: ['noel'],
+    params: [I(), S(), CA('#ffd65a', 'Surprises'), CB('#b3122f', 'Volets'), R('wall', 'Lumière sur les murs', 'uParamA', 0.25)],
+    glsl: HELPERS + SDF + `
+float icon(vec2 q, float k) {
+  if (k < 0.25) return sdStar5(q, 0.32, 0.45);
+  if (k < 0.5) {
+    float d = sdBox(q - vec2(0.0, -0.08), vec2(0.28, 0.22));
+    d = max(d, -sdBox(q - vec2(0.0, -0.08), vec2(0.04, 0.3)));
+    d = max(d, -sdBox(q - vec2(0.0, -0.02), vec2(0.3, 0.035)));
+    d = min(d, sdEll(vec2(abs(q.x), q.y) - vec2(0.09, 0.2), vec2(0.09, 0.05)));
+    return d;
+  }
+  if (k < 0.75) {
+    float d = sdTri(q, vec2(-0.3, -0.2), vec2(0.3, -0.2), vec2(0.0, 0.1));
+    d = min(d, sdTri(q, vec2(-0.23, 0.0), vec2(0.23, 0.0), vec2(0.0, 0.3)));
+    d = min(d, sdTri(q, vec2(-0.16, 0.18), vec2(0.16, 0.18), vec2(0.0, 0.42)));
+    d = min(d, sdBox(q - vec2(0.0, -0.28), vec2(0.06, 0.08)));
+    return d;
+  }
+  float d = length(q - vec2(0.0, -0.05)) - 0.28;
+  d = min(d, sdBox(q - vec2(0.0, 0.26), vec2(0.07, 0.05)));
+  return d;
+}
+vec3 effect(vec2 uv) {
+  int id = zoneId(uv);
+  int ty = zoneTypeAt(uv);
+  vec3 wall = vec3(1.0, 0.85, 0.6) * uParamA * (0.4 + 0.8 * lum(albedo(uv)));
+  wall += uColA * twinkle(asp(uv), 50.0, 0.05) * 0.6;
+  if (id == 0 || !isOpening(ty)) return wall;
+  vec4 g = zoneGeom(id);
+  vec4 mt = zoneMeta(id);
+  vec2 z = (uv - g.xy) / g.zw;
+  float t0 = mt.y * 0.8;
+  float open = smoothstep(t0, t0 + 0.08, uP);
+  vec2 q = z * vec2(g.z * uAspect / g.w, 1.0);
+  float d = icon(q * 1.25, hash11(mt.x * 91.0));
+  float pulse = 0.85 + 0.15 * sin(uT * 3.0 + mt.x * 20.0);
+  vec3 inside = vec3(1.0, 0.75, 0.45) * 0.25 + uColA * fillD(d, 0.012) * 1.5 * pulse + uColA * exp(-max(d, 0.0) * 12.0) * 0.3;
+  // volet qui pivote sur sa charnière gauche
+  float edge = 1.0 - open;
+  float lx = z.x + 0.5;
+  vec3 shutter = uColB * (0.55 + 0.25 * step(abs(fract((lx / max(edge, 0.01)) * 2.0) - 0.5), 0.45)) ;
+  float frame = step(0.42, max(abs(z.x), abs(z.y)));
+  shutter = mix(shutter, uColA * 0.9, frame);
+  vec3 c = lx < edge ? shutter : inside * open;
+  return c + wall * 0.3;
+}`,
+  },
+  {
+    id: 'coeurs', name: 'Cœurs de la Saint-Valentin', category: 'Saisons et fêtes', mood: 'calme', defaultDuration: 12,
+    description: 'Des cœurs lumineux s’envolent en se balançant, et un grand cœur bat au centre de la façade.',
+    tags: ['mariage'],
+    params: [I(), S(), CA('#ff3b6b', 'Cœurs'), CB('#ffb3c7', '2e couleur'), R('count', 'Nombre', 'uParamA', 0.6), TOG('big', 'Grand cœur qui bat', 'uParamB', true), R('bg', 'Lumière de fond', 'uParamC', 0.2)],
+    glsl: HELPERS + SDF + `
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  float t = uT * uSpeed;
+  vec3 c = mix(uColB, uColA, 0.5) * uParamC * 0.4 * (0.3 + uv.y * 0.7);
+  int N = 6 + int(uParamA * 30.0);
+  for (int i = 0; i < 36; i++) {
+    if (i >= N) break;
+    float fi = float(i);
+    float h = hash11(fi * 2.37);
+    float sz = 0.02 + 0.04 * hash11(fi * 5.1);
+    float y = fract(t * (0.04 + 0.05 * h) + h) * 1.3 - 0.15;
+    float x = hash11(fi * 7.3) * uAspect + 0.05 * sin(t * (1.0 + h) + fi);
+    vec2 q = rot2(0.3 * sin(t * 1.5 + fi)) * (pa - vec2(x, y)) / sz;
+    float d = sdHeart(q + vec2(0.0, 0.5));
+    vec3 hc = mix(uColA, uColB, step(0.5, h));
+    c += hc * (fillD(d, 0.06) * 1.2 + exp(-max(d, 0.0) * 4.0) * 0.25) * smoothstep(1.15, 0.9, y);
+  }
+  if (uParamB > 0.5) {
+    float beat = 1.0 + 0.08 * exp(-fract(uBeatIndex + uBeatPhase) * 6.0);
+    vec2 q = (pa - vec2(uAspect * 0.5, 0.45)) / (0.25 * beat);
+    float d = sdHeart(q + vec2(0.0, 0.5));
+    c += uColA * (fillD(d, 0.01) * 1.1 + exp(-max(d, 0.0) * 8.0) * 0.4 + smoothstep(0.02, 0.0, abs(d)) * 0.6);
+  }
+  return c * stoneLit(uv);
+}`,
+  },
+  {
+    id: 'fleurs', name: 'Printemps en fleurs', category: 'Saisons et fêtes', mood: 'calme', defaultDuration: 16,
+    description: 'Des tiges poussent depuis le pied du monument, les feuilles se déplient et les fleurs éclosent une à une.',
+    tags: ['saisons', 'mariage'],
+    params: [I(), S(), CA('#7ed957', 'Tiges'), CB('#ffd1ea', 'Fond'), R('count', 'Nombre de fleurs', 'uParamA', 0.6), R('height', 'Hauteur', 'uParamB', 0.5), R('bg', 'Lumière de fond', 'uParamC', 0.15)],
+    glsl: HELPERS + SDF + `
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  vec3 c = uColB * uParamC * (0.4 + 0.6 * uv.y);
+  int N = 5 + int(uParamA * 18.0);
+  for (int i = 0; i < 23; i++) {
+    if (i >= N) break;
+    float fi = float(i);
+    float h = hash11(fi * 4.13);
+    float x0 = (fi + 0.5) / float(N) * uAspect + (h - 0.5) * 0.06;
+    float H = (0.25 + 0.5 * uParamB) * (0.6 + 0.5 * hash11(fi * 1.9));
+    float st = fi / float(N) * 0.3;
+    float grow = smoothstep(st, st + 0.45, uP);
+    float top = H * grow;
+    float sway = 0.03 * sin(uT * 1.2 + fi);
+    if (pa.y < top + 0.1 && abs(pa.x - x0) < 0.2) {
+      float yy = clamp(pa.y, 0.0, top);
+      float sx = x0 + sway * (yy / max(H, 0.01)) * (yy / max(H, 0.01)) + 0.02 * sin(yy * 12.0 + fi);
+      float d = abs(pa.x - sx) - 0.004;
+      d = max(d, pa.y - top);
+      c += uColA * fillD(d, 1.5 / uRes.y) * 1.2;
+      for (int k = 1; k < 3; k++) {
+        float ly = H * (0.3 * float(k));
+        if (ly > top) break;
+        float lx = x0 + sway * (ly / H) * (ly / H) + 0.02 * sin(ly * 12.0 + fi);
+        float sd = float(k) == 1.0 ? 1.0 : -1.0;
+        vec2 q = rot2(sd * 0.9) * (pa - vec2(lx + sd * 0.025, ly + 0.01));
+        float ld = sdEll(q, vec2(0.012, 0.03) * smoothstep(ly / H * 0.9, ly / H * 0.9 + 0.2, grow));
+        c += uColA * fillD(ld, 1.5 / uRes.y) * 1.1;
+      }
+      float bloom = smoothstep(0.85, 1.0, grow) * smoothstep(st + 0.45, st + 0.6, uP);
+      vec2 fc = vec2(x0 + sway + 0.02 * sin(top * 12.0 + fi), top);
+      vec2 q = pa - fc;
+      float a = atan(q.y, q.x) + uT * 0.2;
+      float petals = 4.0 + floor(h * 3.0);
+      float r = (0.025 + 0.02 * h) * bloom * (0.65 + 0.35 * abs(cos(a * petals * 0.5)));
+      float fd = length(q) - r;
+      vec3 pc = hsv(fract(0.85 + h * 0.35), 0.6, 1.0);
+      c += pc * fillD(fd, 1.5 / uRes.y) * 1.3 + vec3(1.0, 0.85, 0.3) * fillD(length(q) - r * 0.3, 1.5 / uRes.y);
+      c += pc * exp(-max(fd, 0.0) * 40.0) * 0.2 * bloom;
+    }
+  }
+  return c * stoneLit(uv);
+}`,
+  },
+  {
+    id: 'minuteur', name: 'Minuteur d’avant-spectacle', category: 'Saisons et fêtes', mood: 'calme', defaultDuration: 300,
+    description: 'Compte à rebours « Le spectacle commence dans 04:59 » projeté sur le monument, jusqu’à la fin du tableau ou jusqu’à une heure précise. Les 10 dernières secondes s’affichent en grand.',
+    tags: ['intro'],
+    params: [
+      { key: 'text', label: 'Message', type: 'text', slot: 'aux', default: 'Le spectacle commence dans' },
+      SEL('mode', 'Compte jusqu’à', 'uParamD', ['La fin du tableau', 'Une heure précise'], 0),
+      { key: 'at', label: 'Heure précise (HH:MM)', type: 'text', slot: 'aux', default: '21:30' },
+      { key: 'end', label: 'Message à zéro', type: 'text', slot: 'aux', default: 'C’est parti !' },
+      SEL('font', 'Police', 'aux', ['Classique (Cinzel)', 'Gothique', 'Manuscrite', 'Affiche', 'Moderne'], 4),
+      I(), CA('#ffe08a', 'Texte'), CB('#3a6bff', 'Ambiance'),
+      SEL('anim', 'Animation de fond', 'uParamC', ['Anneau qui se vide', 'Ciel étoilé', 'Pulsation douce', 'Aucune'], 0),
+      R('y', 'Position verticale', 'uParamA', 0.5), R('size', 'Taille', 'uParamB', 0.55)],
+    dynText: (p, t, dur) => {
+      let rem = dur - t;
+      if (Number(p.mode) === 1) {
+        const m = /^(\d{1,2})[:hH](\d{2})/.exec(String(p.at ?? ''));
+        if (m) {
+          const now = new Date();
+          const target = new Date(now);
+          target.setHours(Number(m[1]), Number(m[2]), 0, 0);
+          rem = (target.getTime() - now.getTime()) / 1000;
+          if (rem < -3600) rem += 86400; // heure de demain
+        }
+      }
+      const r = Math.ceil(rem - 1e-6);
+      if (r <= 0) return String(p.end ?? '');
+      if (r <= 10) return String(r);
+      const hh = Math.floor(r / 3600), mm = Math.floor((r % 3600) / 60), ss = r % 60;
+      const time = (hh ? `${hh}:${String(mm).padStart(2, '0')}` : String(mm).padStart(2, '0')) + ':' + String(ss).padStart(2, '0');
+      return `~${String(p.text ?? '')}\n${time}`;
+    },
+    glsl: HELPERS + SDF + `
+float txt(vec2 uv) { return texture(uAux, uv).r; }
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  int an = int(uParamC + 0.5);
+  vec3 c = vec3(0.0);
+  vec2 ce = asp(vec2(0.5, uParamA));
+  float sec = fract(uT);
+  if (an == 0) {
+    vec2 d = pa - ce;
+    float R0 = 0.3 + uParamB * 0.15;
+    float r = length(d);
+    float a = fract(atan(d.x, d.y) / TAU + 1.0);
+    float prog = uParamD < 0.5 ? 1.0 - uP : 1.0 - sec;
+    c += uColB * smoothstep(0.01, 0.0, abs(r - R0)) * mix(0.25, 1.3, step(a, prog));
+    c += uColB * exp(-abs(r - R0) * 25.0) * 0.25;
+    vec2 dot0 = ce + vec2(sin(prog * TAU), cos(prog * TAU)) * R0;
+    c += vec3(1.0) * smoothstep(0.02, 0.0, length(pa - dot0));
+  } else if (an == 1) {
+    c += vec3(0.9, 0.95, 1.0) * twinkle(pa, 45.0, 0.1) * 0.8;
+    float k = floor(uT / 3.0);
+    float lt = fract(uT / 3.0);
+    vec2 s0 = vec2(hash11(k) * uAspect, 0.75 + 0.2 * hash11(k + 1.0));
+    vec2 dir = normalize(vec2(-1.0, -0.45));
+    vec2 hd = s0 + dir * lt * 0.6;
+    float along = dot(pa - hd, -dir);
+    float dist = length(pa - hd - (-dir) * clamp(along, 0.0, 0.15));
+    c += vec3(1.0) * smoothstep(0.004, 0.0, dist) * (1.0 - clamp(along / 0.15, 0.0, 1.0)) * step(lt, 0.4) * 1.5;
+    c += uColB * 0.12 * (0.3 + 0.7 * uv.y);
+  } else if (an == 2) {
+    c += uColB * (0.15 + 0.25 * (0.5 - 0.5 * cos(uT * 1.2))) * (0.4 + 0.6 * uv.y);
+  }
+  c *= stoneLit(uv);
+  float m = txt(uv);
+  c = mix(c, uColA * 1.5, m) + uColA * 0.25 * texture(uAux, uv + vec2(0.002, -0.002)).r;
+  return c;
+}`,
+  },
   // ───────────────────────────── MÉDIAS ─────────────────────────────
   {
     id: 'media', name: 'Image / vidéo', category: 'Illusions', mood: 'calme', defaultDuration: 10,
@@ -1795,7 +2476,7 @@ vec3 effect(vec2 uv) { return vec3(0.0); }`,
 
 export const EFFECT_MAP = new Map(EFFECTS.map((e) => [e.id, e]));
 
-export const CATEGORIES: Category[] = ['Mes tableaux', 'Lumière', 'Console lumière', 'Architecture', 'Matières', 'Nature', 'Graphique', 'Illusions'];
+export const CATEGORIES: Category[] = ['Mes tableaux', 'Lumière', 'Console lumière', 'Saisons et fêtes', 'Architecture', 'Matières', 'Nature', 'Graphique', 'Illusions'];
 
 export const CATEGORY_COLORS: Record<Category, string> = {
   Lumière: '#ffcf5c',
@@ -1806,6 +2487,7 @@ export const CATEGORY_COLORS: Record<Category, string> = {
   Illusions: '#ffa26b',
   'Mes tableaux': '#5ef0ff',
   'Console lumière': '#ffe14d',
+  'Saisons et fêtes': '#ff7a3c',
 };
 
 // ───────────── Tableaux personnalisés (écrits par l'utilisateur) ─────────────

@@ -43,6 +43,7 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 - **Aperçus animés** des tableaux, **préréglages** personnels, export **qualité finale**.
 - **Présentation client** : mode plein écran, vidéo habillée (titre + signature) et **lien de démonstration** (`#demo=` + lien d'un fichier .lumirock public).
 - **Plusieurs façades** par projet, **visite guidée**, interface **mobile**.
+- **Minuteur d'avant-spectacle** : « Le spectacle commence dans 04:59 » projeté sur le monument (durée ou heure précise), les 10 dernières secondes en grand, puis démarrage automatique ; aussi avant chaque séance programmée.
 - **Montage automatique sur la musique** : découpe en parties (repères, sections), plans courts quand la musique cogne et longs au calme, coupes sur les mesures, flashs d'accent sur les grosses frappes.
 - **Bibliothèque de musiques libres** (Openverse : Jamendo, Freesound…) : recherche par ambiance, écoute, import en un clic, CC0 / CC BY uniquement, crédit conservé dans le projet, le storyboard et le kit.
 - **Contrôleur MIDI** en live (Web MIDI, Chrome / Edge) : apprentissage des pads et faders, noir, suivant, tap tempo, suivi de l'horloge MIDI.
@@ -51,6 +52,7 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 ## Les tableaux
 
 - **Lumière** : Allumage, Course du soleil (ombres qui tournent), Faisceaux fantômes, Orage, Mille bougies
+- **Saisons et fêtes** : Traîneau du Père Noël, Calendrier de l'Avent, Décompte du Nouvel An, Cœurs de la Saint-Valentin, Lapin de Pâques, Printemps en fleurs, Surf au coucher du soleil, Feuilles d'automne, Sorcière sur son balai, Fenêtres citrouilles, Minuteur d'avant-spectacle
 - **Console lumière** (calés sur le tempo) : Poursuite (chase), Stroboscope, Alternance, Pulsation d'intensité, Balayage aller-retour
 - **Architecture** : Dessin d'architecte, Pierres vivantes (extrusion), Effondrement / reconstruction, Relief vivant 3D (parallaxe), Puzzle, Scan laser, Désintégration, Étincelles d'architecture, Calques animés (portes qui s'ouvrent, fissure qui progresse…)
 - **Matières** : Vitrail, Transmutation (or, marbre, glace, cuivre), Mosaïque, Aquarelle

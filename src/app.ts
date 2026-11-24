@@ -336,7 +336,81 @@ export class App {
     bpm: 120,
     beatOrigin: 0,
     taps: [] as number[],
+    preshowEnd: null as number | null, // fin du minuteur d'avant-spectacle (horloge live)
   };
+  private preshow = { mode: 'duree' as 'duree' | 'heure', min: 5, at: '21:30', text: 'Le spectacle commence dans', anim: 0 };
+
+  /** Lance le minuteur d'avant-spectacle ; à zéro, le spectacle démarre depuis le début. */
+  startPreshow(seconds: number) {
+    if (!this.scene || seconds < 1) {
+      toast('Heure déjà passée : choisissez une heure à venir.', 'err');
+      return;
+    }
+    if (!this.live.on) this.enterLive();
+    const c = newClip('minuteur', seconds);
+    c.params.text = this.preshow.text;
+    c.params.anim = this.preshow.anim;
+    c.params.mode = 0;
+    const now = this.liveNow();
+    this.live.prev = this.live.cur;
+    this.live.cur = { clip: c, start: now };
+    this.live.transStart = now;
+    this.live.preshowEnd = now + seconds;
+    if (this.live.blackout) this.toggleBlackout();
+    this.renderSide();
+    toast(`Minuteur lancé : le spectacle démarrera dans ${fmtTime(seconds)}.`, 'ok');
+  }
+
+  stopPreshow() {
+    this.live.preshowEnd = null;
+    this.live.cur = null;
+    this.renderSide();
+  }
+
+  private preshowSeconds() {
+    const P = this.preshow;
+    if (P.mode === 'duree') return Math.round(P.min * 60);
+    const [hh, mm] = P.at.split(':').map(Number);
+    const t = new Date();
+    t.setHours(hh, mm, 0, 0);
+    return Math.round((t.getTime() - Date.now()) / 1000);
+  }
+
+  private preshowCard() {
+    const P = this.preshow;
+    const L = this.live;
+    const card = h('div', { class: 'card' }, h('div', { class: 'card-title' }, '⏳ Minuteur d’avant-spectacle'));
+    if (L.preshowEnd) {
+      const rem = Math.max(0, L.preshowEnd - this.liveNow());
+      add(card,
+        h('p', { class: 'muted small preshow-status' }, `En cours : le spectacle démarre dans ${fmtTime(Math.round(rem))}, depuis le début et avec la musique.`),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn primary', onclick: () => {
+            L.preshowEnd = this.liveNow();
+          } }, 'Démarrer maintenant'),
+          h('button', { class: 'btn ghost', onclick: () => this.stopPreshow() }, 'Annuler')));
+      return card;
+    }
+    const min = h('input', { type: 'number', min: '0.5', max: '180', step: '0.5', value: String(P.min) });
+    min.addEventListener('change', () => (P.min = Math.max(0.5, Number(min.value) || 5)));
+    const at = h('input', { type: 'time', value: P.at });
+    at.addEventListener('change', () => (P.at = at.value || '21:30'));
+    const msg = h('input', { type: 'text', value: P.text });
+    msg.addEventListener('input', () => (P.text = msg.value));
+    msg.addEventListener('keydown', (e) => e.stopPropagation());
+    add(card,
+      h('p', { class: 'muted small' }, 'Pendant que le public s’installe : « Le spectacle commence dans 04:59 » sur le monument, les 10 dernières secondes en grand, puis le spectacle démarre tout seul.'),
+      select<string>({ label: 'Compter', value: P.mode, options: [{ value: 'duree', label: 'Une durée' }, { value: 'heure', label: 'Jusqu’à une heure précise' }], onChange: (v) => {
+        P.mode = v as 'duree';
+        this.renderSide();
+      } }),
+      P.mode === 'duree' ? h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Durée (minutes)'), min) : h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Début du spectacle'), at),
+      h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Message'), msg),
+      select<number>({ label: 'Animation de fond', value: P.anim, options: ['Anneau qui se vide', 'Ciel étoilé', 'Pulsation douce', 'Aucune'].map((l, i) => ({ value: i, label: l })), onChange: (v) => (P.anim = v) }),
+      h('button', { class: 'btn primary wide', onclick: () => this.startPreshow(this.preshowSeconds()) }, '⏳ Lancer le minuteur'),
+    );
+    return card;
+  }
   private liveKeys = '1234567890azeryuiopqsdghjklmwxcvn';
   private midi = new MidiController({
     action: (a, v) => this.midiAction(a, v),
@@ -477,6 +551,7 @@ export class App {
         h('button', { class: 'btn ghost', onclick: () => this.exitLive() }, 'Quitter (Échap)')),
       h('p', { class: 'muted small' }, 'Cliquez ou tapez la touche d’un pad pour lancer le tableau, avec un fondu. Les pads reprennent les tableaux de votre spectacle.'),
       this.livePads,
+      this.preshowCard(),
       h('div', { class: 'card' },
         select<string>({ label: 'Transition', value: L.transType, options: TRANSITIONS.filter((t) => t.id !== 'cascade').map((t) => ({ value: t.id, label: t.label })), onChange: (v) => (L.transType = v) }),
         slider({ label: 'Durée du fondu (s)', min: 0, max: 6, step: 0.1, value: L.transDur, onInput: (v) => (L.transDur = v) }),
@@ -524,6 +599,18 @@ export class App {
   private renderLiveFrame() {
     const L = this.live;
     const now = this.liveNow();
+    if (L.preshowEnd !== null) {
+      if (now >= L.preshowEnd) {
+        L.preshowEnd = null;
+        if (this.project.schedule?.on) this.scheduleRunning = true;
+        this.exitLive();
+        this.seek(0);
+        this.play();
+        return;
+      }
+      const el = this.els.side.querySelector('.preshow-status');
+      if (el) el.textContent = `En cours : le spectacle démarre dans ${fmtTime(Math.round(L.preshowEnd - now))}, depuis le début et avec la musique.`;
+    }
     L.master += (L.masterTarget - L.master) * 0.12;
     const loc = (x: { clip: Clip; start: number }) => ({ clip: x.clip, local: (now - x.start) % x.clip.duration });
     const m = L.transDur > 0 ? Math.min(1, (now - L.transStart) / L.transDur) : 1;
@@ -662,6 +749,18 @@ export class App {
     return now < b && c.days.includes(prev);
   }
 
+  private nextStartDate(): Date | null {
+    const c = this.schedConf();
+    const d = new Date();
+    for (let k = 0; k < 8; k++) {
+      const day = new Date(d.getFullYear(), d.getMonth(), d.getDate() + k);
+      const [sh, sm] = c.start.split(':').map(Number);
+      day.setHours(sh, sm, 0, 0);
+      if (day > d && c.days.includes(day.getDay())) return day;
+    }
+    return null;
+  }
+
   private nextStartLabel() {
     const c = this.schedConf();
     const d = new Date();
@@ -700,6 +799,12 @@ export class App {
 
   private scheduleTick() {
     const inside = this.inScheduleWindow();
+    const pre = this.schedConf().preshow ?? 0;
+    if (!inside && pre > 0 && !this.live.on && !this.scheduleRunning) {
+      const next = this.nextStartDate();
+      const s = next ? (next.getTime() - Date.now()) / 1000 : Infinity;
+      if (s > 1 && s <= pre * 60) this.startPreshow(Math.round(s));
+    }
     if (inside && !this.scheduleRunning) {
       this.scheduleRunning = true;
       this.scheduleBlack = false;
@@ -739,6 +844,11 @@ export class App {
         h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Début'), start),
         h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Fin'), end),
       ),
+      h('label', { class: 'field' }, h('span', { class: 'lbl' }, 'Minuteur projeté avant le début (minutes, 0 = aucun)'), (() => {
+        const i = h('input', { type: 'number', min: '0', max: '120', step: '1', value: String(c.preshow ?? 0) });
+        i.addEventListener('change', () => set({ preshow: Math.max(0, Number(i.value) || 0) }));
+        return i;
+      })()),
       h('div', { class: 'days' }, ...order.map((d) => h('button', { class: `day${c.days.includes(d) ? ' on' : ''}`, onclick: (e: Event) => {
         const cur = this.schedConf().days;
         set({ days: cur.includes(d) ? cur.filter((x) => x !== d) : [...cur, d] });
