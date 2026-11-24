@@ -5,8 +5,11 @@ import { detectOpenings, findSimilar } from './analysis/detect';
 import { AudioAnalysis, analyseAudio, audioFrameAt, decodeAudio } from './audio';
 import { CATEGORIES, CATEGORY_COLORS, COMMON_PARAMS, CustomFx, EFFECTS, EFFECT_MAP, ParamDef, TRANSITIONS, customEffectDef, registerCustom, unregisterCustom } from './effects/library';
 import { openFxEditor } from './ui/fxeditor';
+import { MidiController } from './midi';
+import { MOODS, MusicResult, fetchMusic, searchMusic } from './musiclib';
+import { IDENTITY, MAX_ANIM, PIVOTS, sceneAnims, zoneTransformAt } from './zoneanim';
 import { Renderer, SceneMaps, ViewMode, freezeStarts, showDuration, trackTimings } from './gl/renderer';
-import { PALETTES, PALETTE_FX, SCENARIOS, compose, defaultShow, newClip } from './scenarios';
+import { MontageOptions, PALETTES, PALETTE_FX, SCENARIOS, autoMontage, compose, defaultShow, newClip } from './scenarios';
 import { TEMPLATES } from './templates';
 import { CommonsResult, searchCommons } from './commons';
 import { EXAMPLES, Example } from './examples';
@@ -110,6 +113,7 @@ export class App {
   private mediaRuntime = new Map<string, { image?: HTMLCanvasElement; video?: HTMLVideoElement; used?: number }>();
   private frameNo = 0;
   private newScenarioDur = 120;
+  private montage: MontageOptions & { cats: string[]; pal: number } = { pool: [], style: 'equilibre', accents: true, cats: ['Lumière', 'Console lumière', 'Architecture', 'Matières', 'Nature', 'Graphique', 'Illusions'], pal: -1 };
 
   constructor(private root: HTMLElement) {
     this.renderer = new Renderer(this.stage.gl);
@@ -253,7 +257,7 @@ export class App {
       if (!f) return;
       if (f.name.endsWith('.lumirock')) this.openProjectFile(f);
       else if (f.type.startsWith('image/')) this.loadPhoto(f);
-      else if (f.type.startsWith('audio/')) this.loadAudio(f);
+      else if (f.type.startsWith('audio/')) { delete this.project.music; this.loadAudio(f); }
     });
   }
 
@@ -334,6 +338,74 @@ export class App {
     taps: [] as number[],
   };
   private liveKeys = '1234567890azeryuiopqsdghjklmwxcvn';
+  private midi = new MidiController({
+    action: (a, v) => this.midiAction(a, v),
+    clock: (bpm) => {
+      this.live.bpm = bpm;
+      const el = this.els.side.querySelector('.live-bpm');
+      if (el) el.textContent = `${bpm} BPM`;
+    },
+    clockStart: () => (this.live.beatOrigin = this.liveNow()),
+    changed: () => this.renderMidiCard(),
+  });
+  private midiCardEl: HTMLElement | null = null;
+
+  private midiAction(a: string, v: number) {
+    if (!this.live.on) return;
+    const L = this.live;
+    if (a === 'master') L.masterTarget = v * 1.5;
+    else if (a === 'fade') L.transDur = Math.round(v * 60) / 10;
+    else if (v <= 0) return; // boutons : seulement à l'appui
+    else if (a === 'blackout') this.toggleBlackout();
+    else if (a === 'tap') this.tapTempo();
+    else if (a === 'next') {
+      const clips = this.liveClips();
+      const cur = clips.findIndex((c) => c.id === L.cur?.clip.id);
+      if (clips.length) this.liveTrigger(clips[(cur + 1) % clips.length]);
+    } else if (a.startsWith('pad:')) {
+      const c = this.liveClips()[Number(a.slice(4))];
+      if (c) this.liveTrigger(c);
+    }
+  }
+
+  private renderMidiCard() {
+    const card = this.midiCardEl;
+    if (!card) return;
+    clear(card);
+    const M = this.midi;
+    const learnBtn = (a: string, label: string) => h('div', { class: 'kv midi-row' }, h('span', {}, label),
+      h('span', {},
+        h('b', {}, M.labelFor(a)), ' ',
+        h('button', { class: `btn ghost small${M.learning === a ? ' on' : ''}`, onclick: () => M.learn(M.learning === a ? null : a) }, M.learning === a ? 'Bougez…' : 'Apprendre'),
+        M.map[a] ? h('button', { class: 'btn ghost small', title: 'Oublier', onclick: () => M.unbind(a) }, '×') : null));
+    add(card,
+      h('div', { class: 'card-title' }, '🎛 Contrôleur MIDI'),
+      !M.access
+        ? h('div', {},
+            h('p', { class: 'muted small' }, 'Branchez un contrôleur USB (pads, faders : Akai APC/MPD, Novation Launchpad/Launch Control, Korg nanoKONTROL…) pour piloter le live sans clavier.'),
+            M.error ? h('p', { class: 'small err-text' }, M.error) : null,
+            h('button', { class: 'btn primary wide', onclick: () => M.connect() }, 'Connecter le MIDI'))
+        : h('div', {},
+            h('p', { class: 'muted small' }, M.devices.length ? `Connecté : ${M.devices.join(', ')}` : 'Aucun appareil détecté : branchez-le, il apparaîtra ici.'),
+            h('p', { class: 'muted small' }, 'Par défaut, les notes 36 et suivantes (C1…) lancent les pads dans l’ordre. Pour un pad précis : « Apprendre » sur le pad puis frappez-le sur le contrôleur.'),
+            learnBtn('master', 'Intensité générale (fader)'),
+            learnBtn('fade', 'Durée du fondu (fader)'),
+            learnBtn('blackout', 'Noir'),
+            learnBtn('next', 'Tableau suivant'),
+            learnBtn('tap', 'Tap tempo'),
+            h('div', { class: 'kv midi-row' }, h('span', {}, 'Pads'), h('span', {},
+              h('button', { class: `btn ghost small${M.learning === 'pad?' ? ' on' : ''}`, onclick: () => M.learn(M.learning === 'pad?' ? null : 'pad?') }, M.learning === 'pad?' ? 'Cliquez un pad…' : M.learning?.startsWith('pad:') ? `Pad ${Number(M.learning.slice(4)) + 1} : frappez…` : 'Apprendre un pad'))),
+            h('label', { class: 'check' }, (() => {
+              const cb = h('input', { type: 'checkbox', checked: M.followClock });
+              cb.addEventListener('change', () => {
+                M.followClock = cb.checked;
+                M.save();
+              });
+              return cb;
+            })(), ' Suivre l’horloge MIDI (tempo de la console / du logiciel DJ)')),
+    );
+    this.renderLivePads();
+  }
 
   liveClips(): Clip[] {
     const all = [...this.project.show.clips, ...(this.project.show.layers ?? []).flatMap((l) => l.clips)];
@@ -425,8 +497,9 @@ export class App {
         h('button', { class: 'btn ghost wide', onclick: () => this.openOutput() }, icon('screen'), 'Sortie projecteur (2e fenêtre)'),
         h('button', { class: 'btn ghost wide', onclick: () => this.calibrateOutput() }, 'Caler le projecteur sur le monument'),
       ),
+      (this.midiCardEl = h('div', { class: 'card' })),
     );
-    this.renderLivePads();
+    this.renderMidiCard();
   }
 
   private renderLivePads() {
@@ -438,8 +511,11 @@ export class App {
       pads.append(h('button', {
         class: `pad${this.live.cur?.clip.id === c.id ? ' on' : ''}`,
         style: `--c:${e ? CATEGORY_COLORS[e.category] : '#888'}`,
-        onclick: () => this.liveTrigger(c),
-      }, h('kbd', {}, this.liveKeys[i].toUpperCase()), h('span', {}, e?.name ?? c.effect)));
+        onclick: () => {
+          if (this.midi.learning === 'pad?') this.midi.learn(`pad:${i}`);
+          else this.liveTrigger(c);
+        },
+      }, h('kbd', {}, this.liveKeys[i].toUpperCase()), h('span', {}, e?.name ?? c.effect), this.midi.map[`pad:${i}`] ? h('small', { class: 'pad-midi' }, this.midi.labelFor(`pad:${i}`)) : null));
     });
     const bpmEl = this.els.side.querySelector('.live-bpm');
     if (bpmEl) bpmEl.textContent = `${this.live.bpm} BPM`;
@@ -457,7 +533,9 @@ export class App {
     if (this.audioNode && this.ac && this.audio) frame = audioFrameAt(this.ac.currentTime - this.audioStart, this.audio.analysis, L.bpm);
     else frame = audioFrameAt(now - L.beatOrigin, null, L.bpm);
     const mode = this.view === 'jour' ? 'projection' : this.view;
+    this.renderer.animTime = B ? (B.clip.start ?? 0) + B.local : 0; // les calques animés rejouent le moment du tableau
     this.renderer.renderLive(A, B, A ? m : 1, L.transType, frame, this.project.show, now, mode, L.master);
+    this.renderer.animTime = null;
   }
 
   // ───────────────────────── Sortie projecteur ─────────────────────────
@@ -1098,7 +1176,10 @@ export class App {
     if (this.showTab === 'scenarios') this.tabScenarios(body);
     else if (this.showTab === 'tableaux') this.tabLibrary(body);
     else if (this.showTab === 'reglages') this.tabClip(body);
-    else if (this.showTab === 'pistes') this.tabTracks(body);
+    else if (this.showTab === 'pistes') {
+      this.tabTracks(body);
+      body.append(this.zoneAnimCard());
+    }
     else if (this.showTab === 'musique') this.tabMusic(body);
     else this.tabAmbiance(body);
   }
@@ -1129,6 +1210,269 @@ export class App {
           h('span', { class: 'sc-text' }, h('b', {}, 'Surprends-moi'), h('span', {}, 'Une composition aléatoire mais cohérente, pour trouver des idées.'))),
       ),
     );
+  }
+
+  private musicLib = { q: '', results: [] as MusicResult[], page: 1, more: false, loading: false, error: '', playing: '' };
+  private musicPreview: HTMLAudioElement | null = null;
+
+  private musicLibCard() {
+    const L = this.musicLib;
+    const list = h('div', { class: 'mlib-list' });
+    const run = async (q: string, page = 1) => {
+      L.q = q;
+      L.page = page;
+      L.loading = true;
+      L.error = '';
+      draw();
+      try {
+        const r = await searchMusic(q, page);
+        L.results = page === 1 ? r.results : [...L.results, ...r.results];
+        L.more = r.more;
+      } catch (e) {
+        L.error = e instanceof Error ? e.message : 'Recherche impossible (connexion ?)';
+      }
+      L.loading = false;
+      draw();
+    };
+    const input = h('input', { type: 'search', placeholder: 'Rechercher : piano, epic, jazz…', value: L.q });
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter' && input.value.trim()) run(input.value.trim());
+    });
+    const draw = () => {
+      clear(list);
+      if (L.loading && !L.results.length) list.append(h('p', { class: 'muted small' }, 'Recherche…'));
+      if (L.error) list.append(h('p', { class: 'small err-text' }, L.error));
+      if (!L.loading && !L.error && L.q && !L.results.length) list.append(h('p', { class: 'muted small' }, 'Aucun résultat.'));
+      for (const m of L.results) {
+        list.append(h('div', { class: 'mlib-item' },
+          h('button', { class: 'btn ghost small mlib-play', title: 'Écouter', onclick: () => this.previewMusic(m, draw) }, L.playing === m.id ? '■' : '▶'),
+          h('div', { class: 'mlib-text' },
+            h('b', {}, m.title),
+            h('span', {}, `${m.author}${m.duration ? ' · ' + fmtTime(m.duration) : ''} · `, h('a', { href: m.page, target: '_blank', rel: 'noopener' }, m.license))),
+          h('button', { class: 'btn primary small', onclick: () => this.importLibraryMusic(m) }, 'Utiliser')));
+      }
+      if (L.more && !L.loading) list.append(h('button', { class: 'btn ghost wide', onclick: () => run(L.q, L.page + 1) }, 'Plus de résultats'));
+      else if (L.loading && L.results.length) list.append(h('p', { class: 'muted small' }, 'Chargement…'));
+    };
+    draw();
+    return h('div', { class: 'card' },
+      h('div', { class: 'card-title' }, '♫ Bibliothèque de musiques libres'),
+      h('p', { class: 'muted small' }, 'Des milliers de morceaux libres (Jamendo, Freesound… via Openverse), uniquement sous licence CC0 ou CC BY : diffusion publique autorisée, en créditant l’auteur. Le crédit est ajouté au projet, au storyboard et au kit.'),
+      h('div', { class: 'kf-chips' }, ...MOODS.map((md) => h('button', { class: 'cat-toggle on', style: '--c:#e0a23e', onclick: () => {
+        input.value = md.q;
+        run(md.q);
+      } }, md.label))),
+      h('div', { class: 'row' }, input, h('button', { class: 'btn ghost', onclick: () => input.value.trim() && run(input.value.trim()) }, 'Chercher')),
+      list,
+      h('p', { class: 'muted small' }, 'Vérifiez toujours la licence sur la page du morceau avant une diffusion publique.'),
+    );
+  }
+
+  private previewMusic(m: MusicResult, redraw: () => void) {
+    const L = this.musicLib;
+    if (this.musicPreview) {
+      this.musicPreview.pause();
+      this.musicPreview = null;
+    }
+    if (L.playing === m.id) {
+      L.playing = '';
+      redraw();
+      return;
+    }
+    const a = new Audio(m.url);
+    a.volume = 0.8;
+    a.play().catch(() => toast('Écoute impossible pour ce morceau.', 'err'));
+    a.onended = () => {
+      L.playing = '';
+      redraw();
+    };
+    this.musicPreview = a;
+    L.playing = m.id;
+    redraw();
+  }
+
+  private async importLibraryMusic(m: MusicResult) {
+    if (this.musicPreview) {
+      this.musicPreview.pause();
+      this.musicPreview = null;
+      this.musicLib.playing = '';
+    }
+    let blob: Blob;
+    try {
+      this.busy(`Téléchargement de « ${m.title} »…`);
+      blob = await fetchMusic(m);
+    } catch {
+      this.busy(null);
+      toast('Le serveur de ce morceau refuse le téléchargement direct : ouvrez sa page, téléchargez-le puis importez le fichier.', 'err', 8000);
+      window.open(m.page, '_blank', 'noopener');
+      return;
+    }
+    this.busy(null);
+    this.project.music = { title: m.title, author: m.author, license: m.license, page: m.page };
+    await this.loadAudio(blob, `${m.title} — ${m.author}`);
+  }
+
+  private animZoneId: string | null = null;
+
+  /** Met à jour les calques animés dans la scène sans la recalculer. */
+  private refreshAnims() {
+    if (this.scene) this.scene.anims = sceneAnims(this.project.zones);
+    this.dirty = true;
+    this.scheduleSave();
+  }
+
+  private zoneAnimCard(): HTMLElement {
+    const zones = this.project.zones.filter((z) => z.type !== 'silhouette' && z.type !== 'exclure');
+    const card = h('div', { class: 'card' }, h('div', { class: 'card-title' }, '↔ Calques animés dans le temps'));
+    if (!zones.length) {
+      card.append(h('p', { class: 'muted small' }, 'Dessinez d’abord des calques (étape « Calques ») : vous pourrez ensuite les déplacer, les agrandir ou les faire pivoter au fil du spectacle — une porte qui s’ouvre, une rosace qui grandit…'));
+      return card;
+    }
+    let z = zones.find((x) => x.id === this.animZoneId) ?? zones.find((x) => x.anim?.keys.length) ?? zones[0];
+    this.animZoneId = z.id;
+    const redraw = () => card.replaceWith(this.zoneAnimCard());
+    const animated = zones.filter((x) => x.anim?.keys.length).length;
+    const ensure = () => {
+      if (!z.anim && animated >= MAX_ANIM) toast(`Maximum ${MAX_ANIM} calques animés : ce mouvement ne sera pas visible.`, 'err');
+      return (z.anim ??= { pivot: 'c', keys: [] });
+    };
+    const now = () => Math.round(this.time * 100) / 100;
+    const cur = z.anim ? zoneTransformAt(z.anim, this.time) : IDENTITY;
+    const keyAtNow = () => z.anim?.keys.find((k) => Math.abs(k.t - this.time) < 0.06);
+    const edit = (field: 'dx' | 'dy' | 'sx' | 'sy' | 'rot', v: number) => {
+      const a = ensure();
+      let k = keyAtNow();
+      if (!k) {
+        k = { t: now(), ...zoneTransformAt(a, this.time) };
+        a.keys.push(k);
+        a.keys.sort((p, q) => p.t - q.t);
+        chips();
+      }
+      k[field] = v;
+      this.refreshAnims();
+    };
+    const preset = (kind: string) => {
+      const a = ensure();
+      const t = now();
+      const ks: typeof a.keys = [];
+      const I = { ...IDENTITY };
+      if (kind === 'porte') {
+        a.pivot = 'l';
+        ks.push({ t, ...I }, { t: t + 2.5, ...I, sx: 0.04 });
+      } else if (kind === 'grandit') {
+        a.pivot = 'c';
+        ks.push({ t, ...I, sx: 0, sy: 0 }, { t: t + 1.5, ...I });
+      } else if (kind === 'disparait') {
+        a.pivot = 'c';
+        ks.push({ t, ...I }, { t: t + 1.5, ...I, sx: 0, sy: 0 });
+      } else if (kind === 'monte') {
+        ks.push({ t, ...I }, { t: t + 3, ...I, dy: 0.25 });
+      } else if (kind === 'tombe') {
+        a.pivot = 'b';
+        ks.push({ t, ...I }, { t: t + 0.8, ...I, rot: -8 }, { t: t + 2, ...I, dy: -0.6, rot: -25 });
+      } else if (kind === 'tourne') {
+        a.pivot = 'c';
+        ks.push({ t, ...I }, { t: t + 3, ...I, rot: 360 });
+      } else if (kind === 'pulse') {
+        a.pivot = 'c';
+        for (let i = 0; i < 4; i++) ks.push({ t: t + i, ...I }, { t: t + i + 0.5, ...I, sx: 1.12, sy: 1.12 });
+        ks.push({ t: t + 4, ...I });
+      }
+      a.keys = [...a.keys.filter((k) => k.t < t - 0.01 || k.t > ks[ks.length - 1].t + 0.01), ...ks].sort((p, q) => p.t - q.t);
+      this.refreshAnims();
+      redraw();
+      toast('Mouvement placé à la tête de lecture : lancez la lecture pour le voir.', 'ok');
+    };
+    const chipsBox = h('div', { class: 'kf-chips' });
+    const chips = () => {
+      clear(chipsBox);
+      for (const k of z.anim?.keys ?? []) chipsBox.append(h('span', { class: 'kf-chip' + (Math.abs(k.t - this.time) < 0.06 ? ' on' : '') },
+        h('button', { class: 'kf-go', onclick: () => {
+          this.seek(k.t);
+          redraw();
+        } }, `◆ ${fmtTime(k.t)}`),
+        h('button', { class: 'kf-x', onclick: () => {
+          z.anim!.keys = z.anim!.keys.filter((x) => x !== k);
+          if (!z.anim!.keys.length) delete z.anim;
+          this.refreshAnims();
+          redraw();
+        } }, '×')));
+    };
+    chips();
+    const pct = (v: number) => `${Math.round(v * 100)} %`;
+    add(card,
+      h('p', { class: 'muted small' }, `Placez la tête de lecture, réglez la position : une image clé ◆ est créée à cet instant. Le contenu du calque se déplace (la photo et les effets suivent), sa place d’origine devient noire — idéal pour une porte qui s’ouvre. Jusqu’à ${MAX_ANIM} calques animés${animated ? ` (${animated} actuellement)` : ''}.`),
+      select<string>({ label: 'Calque', value: z.id, options: zones.map((x, i) => ({ value: x.id, label: `${x.anim?.keys.length ? '◆ ' : ''}${x.name || zoneType(x.type).label} ${i + 1}` })), onChange: (v) => {
+        this.animZoneId = v;
+        redraw();
+      } }),
+      select<string>({ label: 'Point d’ancrage', value: z.anim?.pivot ?? 'c', options: PIVOTS.map((p) => ({ value: p.value, label: p.label })), onChange: (v) => {
+        ensure().pivot = v as 'c';
+        this.refreshAnims();
+      } }),
+      h('div', { class: 'lbl small' }, 'Mouvements tout faits (à partir de la tête de lecture)'),
+      h('div', { class: 'kf-chips' }, ...[['porte', 'Porte qui s’ouvre'], ['grandit', 'Apparaît en grandissant'], ['disparait', 'Disparaît'], ['monte', 'S’envole'], ['tombe', 'Tombe'], ['tourne', 'Tourne'], ['pulse', 'Bat'] ].map(([k, l]) => h('button', { class: 'cat-toggle on', style: '--c:#5ef0ff', onclick: () => preset(k) }, l))),
+      h('div', { class: 'lbl small' }, `Position à ${fmtTime(this.time)}${keyAtNow() ? ' (image clé)' : ''}`),
+      slider({ label: 'Déplacement horizontal', min: -1, max: 1, step: 0.005, value: cur.dx, format: pct, onInput: (v) => edit('dx', v) }),
+      slider({ label: 'Déplacement vertical', min: -1, max: 1, step: 0.005, value: cur.dy, format: pct, onInput: (v) => edit('dy', v) }),
+      slider({ label: 'Largeur', min: 0, max: 3, step: 0.01, value: cur.sx, format: pct, onInput: (v) => edit('sx', v) }),
+      slider({ label: 'Hauteur', min: 0, max: 3, step: 0.01, value: cur.sy, format: pct, onInput: (v) => edit('sy', v) }),
+      slider({ label: 'Rotation (°)', min: -360, max: 360, step: 1, value: cur.rot, format: (v) => `${Math.round(v)}°`, onInput: (v) => edit('rot', v) }),
+      chipsBox,
+      z.anim?.keys.length ? h('button', { class: 'btn ghost wide', onclick: () => {
+        delete z.anim;
+        this.refreshAnims();
+        redraw();
+      } }, 'Supprimer le mouvement de ce calque') : null,
+    );
+    return card;
+  }
+
+  private montageCard() {
+    const m = this.montage;
+    const cats = CATEGORIES.filter((c) => EFFECTS.some((e) => e.category === c));
+    return h('div', { class: 'card' },
+      h('div', { class: 'card-title' }, icon('wand'), ' Montage automatique'),
+      h('p', { class: 'muted small' }, 'Lumirock découpe la musique en parties (vos repères en priorité), choisit un tableau par plan selon l’énergie — calme sur les couplets, fort sur les refrains — coupe sur les mesures et ajoute des flashs sur les grosses frappes.'),
+      select({ label: 'Rythme du montage', value: m.style, options: [{ value: 'doux', label: 'Doux (plans longs)' }, { value: 'equilibre', label: 'Équilibré' }, { value: 'nerveux', label: 'Nerveux (coupes rapides)' }], onChange: (v) => (m.style = v) }),
+      select({ label: 'Couleurs', value: m.pal, options: [{ value: -1, label: 'Couleurs de chaque tableau' }, ...PALETTES.map((p, i) => ({ value: i, label: p.name }))], onChange: (v) => (m.pal = v) }),
+      h('div', { class: 'lbl small' }, 'Familles de tableaux utilisées'),
+      h('div', { class: 'kf-chips' }, ...cats.map((c) => {
+        const b = h('button', { class: 'cat-toggle' + (m.cats.includes(c) ? ' on' : ''), style: `--c:${CATEGORY_COLORS[c]}`, onclick: () => {
+          m.cats = m.cats.includes(c) ? m.cats.filter((x) => x !== c) : [...m.cats, c];
+          b.classList.toggle('on', m.cats.includes(c));
+        } }, c);
+        return b;
+      })),
+      h('label', { class: 'check' }, (() => {
+        const cb = h('input', { type: 'checkbox', checked: m.accents });
+        cb.addEventListener('change', () => (m.accents = cb.checked));
+        return cb;
+      })(), ' Flashs sur les temps forts (piste « Accents »)'),
+      h('button', { class: 'btn primary wide', onclick: () => this.runMontage() }, icon('wand'), 'Monter le spectacle sur la musique'),
+    );
+  }
+
+  private runMontage() {
+    if (!this.audio) return;
+    const m = this.montage;
+    const pool = EFFECTS.filter((e) => m.cats.includes(e.category)).map((e) => e.id);
+    if (!pool.length) {
+      toast('Choisissez au moins une famille de tableaux.', 'err');
+      return;
+    }
+    const show = this.project.show;
+    const { clips, accents } = autoMontage(this.audio.analysis, (show.markers ?? []).map((x) => x.t), { ...m, pool, palette: m.pal >= 0 ? PALETTES[m.pal].colors : undefined });
+    show.clips = clips;
+    show.layers = (show.layers ?? []).filter((l) => l.name !== 'Accents');
+    if (accents.length) show.layers.push({ id: uid('p'), name: 'Accents', clips: accents, opacity: 0.55, blend: 'add' });
+    this.selectedClip = null;
+    this.seek(0);
+    this.refreshShowUI();
+    this.timeline.fit();
+    this.scheduleSave();
+    toast(`Montage : ${clips.length} plans${accents.length ? ` et ${accents.length} accents` : ''}. Lancez la lecture avec Espace.`, 'ok');
   }
 
   private tabTracks(b: HTMLElement) {
@@ -1508,10 +1852,10 @@ export class App {
       add(b, 
         h('div', { class: 'dropzone small', onclick: async () => {
           const f = await pickFile('audio/*');
-          if (f) this.loadAudio(f);
+          if (f) { delete this.project.music; this.loadAudio(f); }
         } }, icon('music'), h('div', { class: 'dz-title' }, 'Importer une musique'), h('div', { class: 'dz-sub' }, 'MP3, WAV, OGG, M4A… analysée dans le navigateur')),
         h('p', { class: 'muted small' }, 'Le tempo et les temps forts sont détectés automatiquement : les effets pulsent sur le rythme et les tableaux se calent sur les mesures.'),
-        h('p', { class: 'muted small' }, 'Musiques libres de droits : Free Music Archive, ccMixter, Musopen (vérifiez toujours la licence et les conditions de diffusion publique).'),
+        this.musicLibCard(),
         h('div', { class: 'card' },
           h('div', { class: 'card-title' }, '♪ Voix off et bruitages'),
           h('p', { class: 'muted small' }, 'Ajoutez une narration, des cloches, un orage… Le son est placé à la tête de lecture sur la piste audio, puis se déplace librement.'),
@@ -1529,6 +1873,7 @@ export class App {
     add(b, 
       h('div', { class: 'card' },
         h('div', { class: 'card-title' }, icon('music'), ' ', this.audio.name),
+        this.project.music ? h('p', { class: 'muted small credit' }, '♪ ', h('a', { href: this.project.music.page, target: '_blank', rel: 'noopener' }, `${this.project.music.title} — ${this.project.music.author}`), ` · ${this.project.music.license}. Crédit à afficher lors de la diffusion.`) : null,
         h('div', { class: 'kv' }, h('span', {}, 'Durée'), h('b', {}, fmtTime(a.duration))),
         h('div', { class: 'kv' }, h('span', {}, 'Parties détectées'), h('b', {}, String(a.sections.length + 1))),
         slider({ label: 'Tempo détecté (BPM)', min: 60, max: 200, step: 0.5, value: a.bpm, onInput: (v) => {
@@ -1571,7 +1916,8 @@ export class App {
           this.scheduleSave();
         } }, 'Effacer tous les repères') : null,
       ),
-      h('button', { class: 'btn primary wide', onclick: () => this.snapToMusic() }, 'Caler la durée des tableaux sur la musique'),
+      this.montageCard(),
+      h('button', { class: 'btn ghost wide', onclick: () => this.snapToMusic() }, 'Caler la durée des tableaux sur la musique'),
       h('button', { class: 'btn ghost wide', onclick: () => {
         this.showTab = 'scenarios';
         this.renderSide();
@@ -1579,6 +1925,7 @@ export class App {
       h('button', { class: 'btn danger wide', onclick: () => {
         this.pause();
         this.audio = null;
+        delete this.project.music;
         this.refreshShowUI();
         this.scheduleSave();
       } }, icon('trash'), 'Retirer la musique'),
@@ -3005,6 +3352,11 @@ export class App {
       ctx.font = `500 ${14 * s}px Inter, sans-serif`;
       ctx.fillStyle = 'rgba(255,255,255,0.45)';
       ctx.fillText(`Photo : ${this.project.credits.author} — ${this.project.credits.license}`, 24 * s, hh - 50 * s);
+    }
+    if (this.project.music) {
+      ctx.font = `500 ${14 * s}px Inter, sans-serif`;
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.fillText(`Musique : « ${this.project.music.title} » ${this.project.music.author} — ${this.project.music.license}`, 24 * s, hh - (this.project.credits ? 72 : 50) * s);
     }
   }
 

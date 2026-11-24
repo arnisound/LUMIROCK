@@ -128,7 +128,7 @@ export const SCENARIOS: Scenario[] = [
 
 // Effets dont les couleurs sont « libres » : la palette du scénario s'y applique.
 // Les autres (neige, eau, feu, soleil…) gardent leurs couleurs naturelles.
-export const PALETTE_FX = new Set(['vitrail', 'mosaique', 'aurore', 'portails', 'scan', 'puzzle', 'faisceaux', 'neon', 'vague', 'battement', 'kaleido', 'glitch', 'onde', 'lasers', 'pixels', 'aquarelle', 'matrix', 'egaliseur', 'etincelles', 'texte', 'dessin']);
+export const PALETTE_FX = new Set(['vitrail', 'mosaique', 'aurore', 'portails', 'scan', 'puzzle', 'faisceaux', 'neon', 'vague', 'battement', 'kaleido', 'glitch', 'onde', 'lasers', 'pixels', 'aquarelle', 'matrix', 'egaliseur', 'etincelles', 'texte', 'dessin', 'poursuite', 'alternance', 'balayage', 'pulsation']);
 
 /** Palettes d'ambiance applicables en un clic. */
 export const PALETTES: { name: string; colors: [string, string] }[] = [
@@ -207,7 +207,12 @@ export function compose(scenarioId: string, total: number, analysis: AudioAnalys
     clips.push(makeClip(step.effect, Math.round(d * 100) / 100, { ...params, ...step.params }, step.transition ?? 'fondu'));
     t += d;
   });
-  // positions libres : transitions centrées sur les frontières (chevauchement)
+  placeCentered(clips);
+  return clips;
+}
+
+/** Positions libres : transitions centrées sur les frontières (chevauchement). */
+function placeCentered(clips: Clip[]) {
   let at = 0;
   clips.forEach((c, i) => {
     const td = c.transition !== 'cut' ? c.transitionDuration : 0;
@@ -218,7 +223,6 @@ export function compose(scenarioId: string, total: number, analysis: AudioAnalys
     c.duration = Math.round((base + ptd / 2 + (i < clips.length - 1 ? td / 2 : 0)) * 100) / 100;
     at += base;
   });
-  return clips;
 }
 
 function pick<T>(arr: T[]): T {
@@ -266,4 +270,93 @@ export function defaultShow(): Show {
     bpm: 110,
     master: { brightness: 1, bloom: 0.7, relief: 0.6, vignette: 0 },
   };
+}
+
+export interface MontageOptions {
+  pool: string[]; // tableaux autorisés (vide = tous)
+  style: 'doux' | 'equilibre' | 'nerveux';
+  accents: boolean; // flashs sur les temps forts (piste superposée)
+  palette?: [string, string];
+}
+
+/** Montage automatique : découpe la musique en parties (repères, sections), puis en plans de quelques mesures
+ *  selon l'énergie, choisit un tableau adapté à chaque plan et place des accents sur les grosses frappes. */
+export function autoMontage(a: AudioAnalysis, markers: number[], o: MontageOptions): { clips: Clip[]; accents: Clip[] } {
+  const beat = 60 / a.bpm, bar = beat * 4;
+  const total = a.duration;
+  const snap = (t: number) => Math.max(0, a.offset + Math.round((t - a.offset) / bar) * bar);
+  // frontières de parties : repères en priorité, puis sections détectées
+  const raw = [...markers, ...a.sections].filter((t) => t > bar * 2 && t < total - bar * 2).map(snap).sort((x, y) => x - y);
+  const bounds = [0];
+  for (const t of raw) if (t - bounds[bounds.length - 1] >= bar * 2) bounds.push(t);
+  bounds.push(total);
+  const styleK = o.style === 'doux' ? 2 : o.style === 'nerveux' ? 0.5 : 1;
+  const usable = EFFECTS.filter((e) => !['texte', 'media', 'vide', 'calqueanime', 'personnages'].includes(e.id) && !e.id.startsWith('custom:'));
+  const pool = o.pool.length ? usable.filter((e) => o.pool.includes(e.id)) : usable.filter((e) => e.id !== 'strobe');
+  const all = pool.length ? pool : usable;
+  const recent: string[] = [];
+  const choose = (en: number) => {
+    const mood = en > 0.62 ? 'fort' : en < 0.35 ? 'calme' : 'moyen';
+    let c = all.filter((e) => e.mood === mood && !recent.includes(e.id));
+    if (!c.length) c = all.filter((e) => !recent.includes(e.id));
+    if (!c.length) c = all;
+    const e = pick(c);
+    recent.push(e.id);
+    if (recent.length > Math.min(4, all.length - 1)) recent.shift();
+    return e;
+  };
+  const clips: Clip[] = [];
+  let prevEn = 0;
+  for (let s = 0; s < bounds.length - 1; s++) {
+    const s0 = bounds[s], s1 = bounds[s + 1];
+    const en = energyAt(a, s0, s1);
+    // longueur des plans : longue au calme, courte quand ça cogne
+    const bars = Math.max(1, Math.round((en > 0.7 ? 2 : en > 0.45 ? 4 : 8) * styleK));
+    const n = Math.max(1, Math.round((s1 - s0) / (bars * bar)));
+    for (let k = 0; k < n; k++) {
+      const t0 = s0 + ((s1 - s0) * k) / n;
+      const t1 = s0 + ((s1 - s0) * (k + 1)) / n;
+      const e = choose(energyAt(a, t0, t1));
+      const params: Record<string, ParamValue> = { intensity: Math.round((0.75 + energyAt(a, t0, t1) * 0.45) * 100) / 100 };
+      if (o.palette && PALETTE_FX.has(e.id)) {
+        params.colorA = o.palette[0];
+        if (e.params.some((p) => p.key === 'colorB')) params.colorB = o.palette[1];
+      }
+      // transitions : coupe franche sur une montée d'énergie, flash à l'entrée d'une partie forte, fondu sinon
+      const first = k === 0 && s > 0;
+      const tr = first && en - prevEn > 0.2 ? 'flash' : en > 0.65 || o.style === 'nerveux' ? 'cut' : first ? 'fondu' : pick(['fondu', 'fondu', 'balayage', 'dissolution']);
+      if (clips.length) {
+        const pc = clips[clips.length - 1];
+        pc.transition = tr;
+        pc.transitionDuration = tr === 'cut' ? 0 : tr === 'flash' ? beat : Math.min(bar, (t1 - t0) * 0.3);
+      }
+      const c = makeClip(e.id, Math.round((t1 - t0) * 100) / 100, params, 'fondu');
+      clips.push(c);
+    }
+    prevEn = en;
+  }
+  if (clips.length) clips[clips.length - 1].transitionDuration = Math.min(2.5, clips[clips.length - 1].duration * 0.25);
+  placeCentered(clips);
+  // accents : un flash d'un temps sur les mesures où les basses frappent le plus fort
+  const accents: Clip[] = [];
+  if (o.accents && a.bands3.length) {
+    const rate = a.bands3.length / 3 / a.duration;
+    const scores: { t: number; v: number }[] = [];
+    for (let t = a.offset; t < total - beat; t += bar) {
+      let m = 0;
+      for (let i = Math.floor(t * rate); i < Math.floor((t + beat * 0.5) * rate); i++) m = Math.max(m, a.bands3[i * 3] ?? 0);
+      scores.push({ t, v: m * (0.4 + energyAt(a, t, t + bar)) });
+    }
+    const sorted = scores.map((x) => x.v).sort((x, y) => x - y);
+    const thr = sorted[Math.floor(sorted.length * 0.8)] ?? 1;
+    for (const sc of scores) {
+      if (sc.v < thr || sc.v <= 0) continue;
+      const c = makeClip('strobe', Math.round(beat * 100) / 100, { rate: 0, duty: 0.6, colorA: o.palette?.[0] ?? '#ffffff' }, 'cut');
+      c.start = Math.round(sc.t * 100) / 100;
+      c.transitionDuration = 0;
+      c.fade = 0;
+      accents.push(c);
+    }
+  }
+  return { clips, accents };
 }

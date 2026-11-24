@@ -43,10 +43,15 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 - **Aperçus animés** des tableaux, **préréglages** personnels, export **qualité finale**.
 - **Présentation client** : mode plein écran, vidéo habillée (titre + signature) et **lien de démonstration** (`#demo=` + lien d'un fichier .lumirock public).
 - **Plusieurs façades** par projet, **visite guidée**, interface **mobile**.
+- **Montage automatique sur la musique** : découpe en parties (repères, sections), plans courts quand la musique cogne et longs au calme, coupes sur les mesures, flashs d'accent sur les grosses frappes.
+- **Bibliothèque de musiques libres** (Openverse : Jamendo, Freesound…) : recherche par ambiance, écoute, import en un clic, CC0 / CC BY uniquement, crédit conservé dans le projet, le storyboard et le kit.
+- **Contrôleur MIDI** en live (Web MIDI, Chrome / Edge) : apprentissage des pads et faders, noir, suivant, tap tempo, suivi de l'horloge MIDI.
+- **Calques animés dans le temps** : déplacement, échelle et rotation d'un calque au fil du spectacle (porte qui s'ouvre, rosace qui grandit, élément qui tombe…), tous les tableaux suivent.
 
 ## Les tableaux
 
 - **Lumière** : Allumage, Course du soleil (ombres qui tournent), Faisceaux fantômes, Orage, Mille bougies
+- **Console lumière** (calés sur le tempo) : Poursuite (chase), Stroboscope, Alternance, Pulsation d'intensité, Balayage aller-retour
 - **Architecture** : Dessin d'architecte, Pierres vivantes (extrusion), Effondrement / reconstruction, Relief vivant 3D (parallaxe), Puzzle, Scan laser, Désintégration, Étincelles d'architecture, Calques animés (portes qui s'ouvrent, fissure qui progresse…)
 - **Matières** : Vitrail, Transmutation (or, marbre, glace, cuivre), Mosaïque, Aquarelle
 - **Nature** : Montée des eaux, Embrasement, Nuit de neige, Jardin suspendu, Aurore boréale, Coulée de lave, Brume mystérieuse, Pluie de pétales

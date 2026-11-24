@@ -18,7 +18,7 @@ export interface ParamDef {
   options?: { value: number; label: string }[];
 }
 
-export type Category = 'Lumière' | 'Architecture' | 'Matières' | 'Nature' | 'Graphique' | 'Illusions' | 'Mes tableaux';
+export type Category = 'Lumière' | 'Console lumière' | 'Architecture' | 'Matières' | 'Nature' | 'Graphique' | 'Illusions' | 'Mes tableaux';
 export type Mood = 'calme' | 'moyen' | 'fort';
 
 export interface EffectDef {
@@ -42,6 +42,22 @@ const SEL = (key: string, label: string, slot: UniformSlot, options: string[], d
   key, label, type: 'select', slot, default: d, options: options.map((l, i) => ({ value: i, label: l })),
 });
 const TOG = (key: string, label: string, slot: UniformSlot, d = false): ParamDef => ({ key, label, type: 'toggle', slot, default: d });
+
+const HELPERS = `
+// --- outils « console lumière » : chaque calque est un « projecteur », classé de gauche à droite
+float stepClock(float rate) { return (uBeatIndex + uBeatPhase) * rate; }
+float rateOf(float sel) { return sel < 0.5 ? 1.0 : sel < 1.5 ? 2.0 : sel < 2.5 ? 0.25 : 4.0; }
+// rang 0..1 du calque (ou d'une bande verticale si pas de calque)
+float unitRank(vec2 uv, out float count) {
+  int id = zoneId(uv);
+  if (id > 0 && uZoneCount > 1.5) { count = uZoneCount; return zoneMeta(id).y; }
+  count = 12.0;
+  return floor(uv.x * 12.0) / 11.0;
+}
+float unitX(vec2 uv) { int id = zoneId(uv); return id > 0 ? zoneGeom(id).x : uv.x; }
+float unitHash(vec2 uv) { int id = zoneId(uv); return id > 0 ? zoneMeta(id).x : hash11(floor(uv.x * 12.0) + 7.0); }
+vec3 stoneLit(vec2 uv) { return vec3(0.45 + 0.9 * lum(albedo(uv))); }
+`;
 
 export const EFFECTS: EffectDef[] = [
   // ───────────────────────────── LUMIÈRE ─────────────────────────────
@@ -1599,6 +1615,130 @@ vec3 effect(vec2 uv) {
   return bg * (1.0 - sh * 0.95) + uColA * 0.05;
 }`,
   },
+  // ─────────────────────────── CONSOLE LUMIÈRE ───────────────────────────
+  {
+    id: 'poursuite', name: 'Poursuite (chase)', category: 'Console lumière', mood: 'fort', defaultDuration: 12,
+    description: 'Les éléments s’allument l’un après l’autre sur le tempo, comme une poursuite de console lumière, avec traîne.',
+    tags: ['national', 'mariage', 'halloween', 'musique'],
+    params: [I(), CA('#ffffff', 'Couleur 1'), CB('#ffb300', 'Couleur 2'),
+      SEL('dir', 'Sens', 'uParamC', ['Gauche → droite', 'Droite → gauche', 'Aller-retour', 'Du centre vers les bords', 'Aléatoire'], 0),
+      SEL('rate', 'Vitesse', 'uParamD', ['1 pas par temps', '2 pas par temps', '1 pas par mesure', '4 pas par temps'], 0),
+      R('group', 'Éléments allumés ensemble', 'uParamA', 0.15), R('trail', 'Traîne', 'uParamB', 0.5), R('base', 'Lumière de fond', 'uParamE', 0.05)],
+    glsl: HELPERS + `
+vec3 effect(vec2 uv) {
+  float n;
+  float r = unitRank(uv, n);
+  int dir = int(uParamC + 0.5);
+  float s = stepClock(rateOf(uParamD));
+  float N = max(2.0, n);
+  float i = floor(r * (N - 1.0) + 0.5);
+  if (dir == 1) i = N - 1.0 - i;
+  if (dir == 3) i = floor(abs(unitX(uv) - 0.5) * 2.0 * (N * 0.5) + 0.5);
+  float steps = dir == 3 ? floor(N * 0.5) + 1.0 : N;
+  float k = floor(s);
+  float head = mod(k, steps);
+  if (dir == 2) { float pp = mod(k, max(1.0, 2.0 * steps - 2.0)); head = pp < steps ? pp : 2.0 * steps - 2.0 - pp; }
+  float group = 1.0 + floor(uParamA * 4.0);
+  float lit;
+  if (dir == 4) lit = step(1.0 - group / N - 0.05, hash11(k * 7.31 + i * 1.7));
+  else {
+    float d = dir == 2 ? abs(head - i) : mod(head - i + steps * 4.0, steps);
+    float fr = fract(s);
+    lit = d < group ? 1.0 : uParamB * exp(-(d - group + fr) * (3.5 - uParamB * 2.5));
+  }
+  vec3 col = mod(k, 2.0) < 1.0 ? uColA : uColB;
+  return col * stoneLit(uv) * (uParamE + lit * 1.3);
+}`,
+  },
+  {
+    id: 'strobe', name: 'Stroboscope', category: 'Console lumière', mood: 'fort', defaultDuration: 6,
+    description: 'Flashs secs sur le tempo ou sur les basses. Attention aux personnes photosensibles : à utiliser avec modération.',
+    tags: ['halloween', 'musique', 'national'],
+    params: [I(), CA('#ffffff', 'Couleur'), SEL('rate', 'Cadence', 'uParamC', ['1 flash par temps', '2 par temps', '1 par mesure', 'Sur les basses'], 0), R('duty', 'Durée du flash', 'uParamA', 0.25), R('base', 'Lumière de fond', 'uParamB', 0.0)],
+    glsl: HELPERS + `
+vec3 effect(vec2 uv) {
+  float f;
+  int m = int(uParamC + 0.5);
+  if (m == 3) f = step(0.62, uBass) * uBass;
+  else {
+    float s = stepClock(m == 0 ? 1.0 : m == 1 ? 2.0 : 0.25);
+    f = step(fract(s), 0.05 + uParamA * 0.4);
+  }
+  return uColA * stoneLit(uv) * (uParamB + f * 1.6);
+}`,
+  },
+  {
+    id: 'alternance', name: 'Alternance', category: 'Console lumière', mood: 'moyen', defaultDuration: 10,
+    description: 'Deux groupes d’éléments s’allument en alternance : un sur deux, gauche/droite ou haut/bas, en douceur ou en coupe franche.',
+    tags: ['national', 'mariage', 'noel', 'musique'],
+    params: [I(), CA('#ffffff', 'Groupe A'), CB('#ff3355', 'Groupe B'),
+      SEL('split', 'Groupes', 'uParamC', ['Un sur deux', 'Gauche / droite', 'Haut / bas', 'Damier'], 0),
+      SEL('rate', 'Bascule', 'uParamD', ['À chaque temps', 'Deux fois par temps', 'À chaque mesure', '4 fois par temps'], 0),
+      R('soft', 'Douceur', 'uParamA', 0.3), R('base', 'Lumière de fond', 'uParamB', 0.05)],
+    glsl: HELPERS + `
+vec3 effect(vec2 uv) {
+  float n;
+  float r = unitRank(uv, n);
+  int sp = int(uParamC + 0.5);
+  float g;
+  int id = zoneId(uv);
+  vec2 c = id > 0 ? zoneGeom(id).xy : uv;
+  if (sp == 0) g = mod(floor(r * (max(n, 2.0) - 1.0) + 0.5), 2.0);
+  else if (sp == 1) g = step(0.5, c.x);
+  else if (sp == 2) g = step(0.5, c.y);
+  else g = mod(floor(c.x * 6.0) + floor(c.y * 4.0), 2.0);
+  float s = stepClock(rateOf(uParamD));
+  float ph = fract(s * 0.5) ;
+  float w = uParamA * 0.45 + 0.001;
+  float aOn = sstep(0.5 + w, 0.5 - w, abs(ph * 2.0 - 1.0)) ;
+  float on = g < 0.5 ? aOn : 1.0 - aOn;
+  vec3 col = g < 0.5 ? uColA : uColB;
+  return col * stoneLit(uv) * (uParamB + on * 1.3);
+}`,
+  },
+  {
+    id: 'pulsation', name: 'Pulsation d’intensité', category: 'Console lumière', mood: 'calme', defaultDuration: 12,
+    description: 'Le gradateur respire : toute la façade (ou les calques ciblés) monte et descend en intensité, sur place ou en vague.',
+    tags: ['noel', 'mariage', 'patrimoine', 'musique'],
+    params: [I(), CA('#ffe2b0', 'Couleur'), CB('#ff7a3c', 'Couleur creuse'),
+      SEL('shape', 'Forme', 'uParamC', ['Respiration (sinus)', 'Sur chaque temps', 'Vague gauche → droite', 'Vague depuis le centre'], 0),
+      SEL('rate', 'Période', 'uParamD', ['1 temps', '1/2 temps', '1 mesure', '1/4 de temps'], 2),
+      R('min', 'Intensité minimale', 'uParamA', 0.1), R('max', 'Intensité maximale', 'uParamB', 1.0)],
+    glsl: HELPERS + `
+vec3 effect(vec2 uv) {
+  int sh = int(uParamC + 0.5);
+  float rate = rateOf(uParamD);
+  float s = stepClock(rate);
+  float v;
+  if (sh == 0) v = 0.5 - 0.5 * cos(s * TAU);
+  else if (sh == 1) v = exp(-fract(s) * 5.0);
+  else if (sh == 2) v = 0.5 - 0.5 * cos((s - unitX(uv) * 1.5) * TAU);
+  else v = 0.5 - 0.5 * cos((s - abs(unitX(uv) - 0.5) * 2.0) * TAU);
+  float lvl = mix(uParamA, uParamB, v);
+  return mix(uColB, uColA, v) * stoneLit(uv) * lvl * 1.3;
+}`,
+  },
+  {
+    id: 'balayage', name: 'Balayage aller-retour', category: 'Console lumière', mood: 'fort', defaultDuration: 10,
+    description: 'Une barre de lumière va et vient d’un bord à l’autre de la façade, avec traîne, sur la mesure.',
+    tags: ['national', 'halloween', 'musique'],
+    params: [I(), CA('#ff2030', 'Barre'), CB('#3050ff', 'Traîne'), SEL('axis', 'Sens', 'uParamC', ['Horizontal', 'Vertical'], 0),
+      SEL('rate', 'Vitesse', 'uParamD', ['1 passage par temps', '2 par temps', '1 par mesure', '4 par temps'], 2), R('width', 'Largeur', 'uParamA', 0.25), R('trail', 'Traîne', 'uParamB', 0.6)],
+    glsl: HELPERS + `
+vec3 effect(vec2 uv) {
+  float s = stepClock(rateOf(uParamD));
+  float tri = abs(fract(s * 0.5) * 2.0 - 1.0);
+  float pos = tri;
+  float x = uParamC < 0.5 ? unitX(uv) : uv.y;
+  float d = abs(x - pos);
+  float w = 0.02 + uParamA * 0.12;
+  float bar = sstep(w, w * 0.3, d);
+  float goingRight = step(0.5, fract(s * 0.5));
+  float behind = uParamC < 0.5 ? (goingRight > 0.5 ? pos - x : x - pos) : (goingRight > 0.5 ? x - pos : pos - x);
+  float tr = behind > 0.0 ? exp(-behind * (12.0 - uParamB * 9.0)) * uParamB : 0.0;
+  return (uColA * bar * 1.6 + uColB * tr) * stoneLit(uv);
+}`,
+  },
   // ───────────────────────────── MÉDIAS ─────────────────────────────
   {
     id: 'media', name: 'Image / vidéo', category: 'Illusions', mood: 'calme', defaultDuration: 10,
@@ -1655,7 +1795,7 @@ vec3 effect(vec2 uv) { return vec3(0.0); }`,
 
 export const EFFECT_MAP = new Map(EFFECTS.map((e) => [e.id, e]));
 
-export const CATEGORIES: Category[] = ['Mes tableaux', 'Lumière', 'Architecture', 'Matières', 'Nature', 'Graphique', 'Illusions'];
+export const CATEGORIES: Category[] = ['Mes tableaux', 'Lumière', 'Console lumière', 'Architecture', 'Matières', 'Nature', 'Graphique', 'Illusions'];
 
 export const CATEGORY_COLORS: Record<Category, string> = {
   Lumière: '#ffcf5c',
@@ -1665,6 +1805,7 @@ export const CATEGORY_COLORS: Record<Category, string> = {
   Graphique: '#ff6fa3',
   Illusions: '#ffa26b',
   'Mes tableaux': '#5ef0ff',
+  'Console lumière': '#ffe14d',
 };
 
 // ───────────── Tableaux personnalisés (écrits par l'utilisateur) ─────────────

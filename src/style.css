@@ -402,3 +402,18 @@ header.top .steps { flex-shrink: 1; min-width: 0; }
   .step:not(.active) { font-size: 0; gap: 0; padding: 6px; }
   .step:not(.active) .num { font-size: 12px; }
 }
+.cat-toggle { border: 1px solid var(--line, #333); background: transparent; color: inherit; border-radius: 999px; padding: 4px 10px; font-size: 12px; cursor: pointer; opacity: .55; }
+.cat-toggle.on { opacity: 1; border-color: var(--c); background: color-mix(in srgb, var(--c) 18%, transparent); }
+.midi-row { align-items: center; gap: 6px; }
+.midi-row > span:last-child { display: flex; align-items: center; gap: 4px; }
+.btn.small.on { background: var(--accent); color: #000; }
+.pad .pad-midi { position: absolute; bottom: 3px; right: 5px; font-size: 9px; opacity: .6; }
+.err-text { color: #ff6b6b; }
+.mlib-list { display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow-y: auto; margin: 8px 0; }
+.mlib-item { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 8px; background: rgba(255,255,255,.03); }
+.mlib-text { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 12px; }
+.mlib-text b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mlib-text span { opacity: .65; font-size: 11px; }
+.mlib-text a { color: inherit; }
+.mlib-play { width: 30px; padding: 4px 0; }
+.midi-row b { white-space: nowrap; }

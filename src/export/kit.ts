@@ -93,7 +93,7 @@ function guide(project: Project, scene: SceneMaps) {
   return `LUMIROCK — KIT PRO
 ==================
 Projet : ${project.name}
-${project.credits ? `Photo de la façade : ${project.credits.author} — ${project.credits.license} (${project.credits.page})\n` : ''}Résolution de référence : ${scene.width} × ${scene.height} px (ratio ${(scene.width / scene.height).toFixed(4)})
+${project.credits ? `Photo de la façade : ${project.credits.author} — ${project.credits.license} (${project.credits.page})\n` : ''}${project.music ? `Musique : « ${project.music.title} » ${project.music.author} — ${project.music.license} (${project.music.page}) — crédit obligatoire lors de la diffusion\n` : ''}Résolution de référence : ${scene.width} × ${scene.height} px (ratio ${(scene.width / scene.height).toFixed(4)})
 Toutes les images du kit sont alignées pixel par pixel sur « facade_redressee.png ».
 
 CONTENU

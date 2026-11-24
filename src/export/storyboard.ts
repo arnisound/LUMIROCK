@@ -79,6 +79,7 @@ footer { margin-top: 18px; color: #888; font-size: 10px; text-align: center; }
 ${o.musicName ? `<div><b>Musique :</b> ${esc(o.musicName)}${o.analysis ? ` (${o.analysis.bpm} BPM)` : ''}</div>` : ''}
 ${(show.sounds ?? []).length ? `<div><b>Voix off / bruitages :</b> ${(show.sounds ?? []).length}</div>` : ''}
 ${cr ? `<div class="small">Photo : ${esc(cr.author)} — ${esc(cr.license)}</div>` : ''}
+${o.project.music ? `<div class="small">Musique : « ${esc(o.project.music.title)} » ${esc(o.project.music.author)} — ${esc(o.project.music.license)} (${esc(o.project.music.page)})</div>` : ''}
 </div></div>
 <table>${rows.map((x, i) => `<tr><td class="n">${i + 1}</td><td class="img"><img src="${x.img}"></td>
 <td><div class="name">${esc(x.name)}<span class="cat" style="background:${CATEGORY_COLORS[x.cat as keyof typeof CATEGORY_COLORS] ?? '#888'}">${esc(x.cat)}</span></div>

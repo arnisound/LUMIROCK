@@ -29,6 +29,22 @@ export interface Zone {
   type: ZoneTypeKey;
   points: Pt[];
   relief?: number; // 0..1, surcharge du relief par défaut du type
+  anim?: ZoneAnim; // mouvement du calque au fil du spectacle
+}
+
+/** Image clé de mouvement d'un calque (temps absolu du spectacle). */
+export interface ZoneKey {
+  t: number;
+  dx: number; // déplacement (fraction de la largeur, vers la droite)
+  dy: number; // déplacement (fraction de la hauteur, vers le haut)
+  sx: number; // échelle horizontale
+  sy: number; // échelle verticale
+  rot: number; // rotation (degrés)
+}
+
+export interface ZoneAnim {
+  pivot: 'c' | 'l' | 'r' | 'b' | 't';
+  keys: ZoneKey[];
 }
 
 export type ParamValue = number | string | boolean;
@@ -105,6 +121,7 @@ export interface Project {
   outputs?: { count: number; overlap: number }; // plusieurs vidéoprojecteurs côte à côte
   schedule?: { on: boolean; start: string; end: string; days: number[] }; // programmation horaire (HH:MM, jours 0 = dimanche)
   credits?: { title: string; author: string; license: string; page: string }; // photo de façade sous licence libre
+  music?: { title: string; author: string; license: string; page: string }; // musique de la bibliothèque libre
   customFx?: { id: string; name: string; description: string; code: string }[]; // tableaux écrits en code
 }
 

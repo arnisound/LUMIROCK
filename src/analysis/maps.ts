@@ -1,4 +1,5 @@
 // Calcul des cartes d'analyse de la façade : calques, profondeur, normales, contours.
+import { sceneAnims } from '../zoneanim';
 import type { SceneMaps } from '../gl/renderer';
 import { Pt, Zone, ZONE_TYPES, zoneType } from '../types';
 
@@ -242,5 +243,5 @@ export function buildScene(image: ImageData, zones: Zone[], opts: BuildOptions =
     edges[i * 4 + 3] = Math.round(Math.min(1, glowLines[i] * 3) * 255);
   }
 
-  return { width: W, height: H, albedo, depth: toRGBA(depth), normal, zones: zonesRGBA, edges, zoneInfo, zoneCount: drawable.length };
+  return { width: W, height: H, albedo, depth: toRGBA(depth), normal, zones: zonesRGBA, edges, zoneInfo, zoneCount: drawable.length, anims: sceneAnims(zones) };
 }

@@ -3,6 +3,7 @@ import { FULLSCREEN_VS, Program, Target, createTarget, deleteTarget } from './gl
 import { COMMON_PARAMS, EFFECT_MAP, EffectDef, TRANSITIONS } from '../effects/library';
 import type { Clip, Show } from '../types';
 import { effectiveProgress, paramAt } from '../keys';
+import { SceneAnim, animUniforms } from '../zoneanim';
 
 export interface SceneMaps {
   width: number;
@@ -14,6 +15,7 @@ export interface SceneMaps {
   edges: Uint8Array;
   zoneInfo: Float32Array; // 256 x 2 x RGBA
   zoneCount: number;
+  anims?: SceneAnim[]; // calques animés dans le temps
 }
 
 export interface AudioFrame {
@@ -365,6 +367,7 @@ export class Renderer {
   private auxAspect = 1;
   /** Qualité du rendu : 0 = aperçu, 1 = finale (ombres plus fines). */
   quality = 0;
+  animTime: number | null = null; // horloge des calques animés (null = temps du spectacle)
 
   /** Appelé quand une police finit de se charger (pour redessiner). */
   onNeedRedraw: (() => void) | null = null;
@@ -498,6 +501,15 @@ export class Renderer {
     p.f('uBass', audio.bass ?? audio.beat).f('uMid', audio.mid ?? 0.5).f('uHigh', audio.high ?? 0.3);
     this.gl.uniform1fv(p.loc('uSpec'), audio.spec ?? new Float32Array(16));
     p.f('uRelief', show.master.relief).f('uSeed', seedFrom(clip.id)).f('uZoneCount', s.zoneCount);
+    const an = animUniforms(s.anims, this.animTime ?? time, s.width / s.height);
+    p.f('uAnimCount', an.count);
+    if (an.count) {
+      const gl = this.gl;
+      gl.uniform1fv(p.loc('uAnimId'), an.ids);
+      gl.uniformMatrix3fv(p.loc('uAnimInv'), false, an.inv);
+      gl.uniformMatrix3fv(p.loc('uAnimFwd'), false, an.fwd);
+      gl.uniform2fv(p.loc('uAnimScale'), an.scale);
+    }
     // valeurs par défaut des emplacements
     p.f('uIntensity', 1).f('uSpeed', 1).v3('uColA', [1, 1, 1]).v3('uColB', [1, 1, 1]).f('uParamA', 0.5).f('uParamB', 0.5).f('uParamC', 0).f('uParamD', 0).f('uParamE', 0).f('uParamF', 0).f('uParamG', 0);
     p.f('uTarget', 0).f('uTargetBg', 0).f('uReact', 0).f('uReactBand', 0).f('uMirror', 0).f('uHue', 0).f('uSat', 1);

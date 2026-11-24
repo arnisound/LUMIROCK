@@ -47,6 +47,11 @@ uniform float uParamD;
 uniform float uParamE;
 uniform float uParamF;
 uniform float uParamG;
+uniform float uAnimCount;   // calques animés dans le temps
+uniform float uAnimId[8];
+uniform mat3 uAnimInv[8];   // uv affiché -> uv d'origine
+uniform mat3 uAnimFwd[8];   // uv d'origine -> uv affiché
+uniform vec2 uAnimScale[8];
 
 #define PI 3.14159265359
 #define TAU 6.28318530718
@@ -100,19 +105,55 @@ float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float sat(float x) { return clamp(x, 0.0, 1.0); }
 float sstep(float a, float b, float x) { return smoothstep(a, b, x); }
 
-vec3 albedo(vec2 uv) { return texture(uAlbedo, uv).rgb; }
+// Calques animés : renvoie l'endroit d'origine du contenu affiché en uv ; hole = 1 là où un calque a quitté sa place.
+float rawZoneId(vec2 uv) { return texelFetch(uZones, ivec2(clamp(uv, 0.0, 0.9999) * uZoneRes), 0).r * 255.0; }
+vec2 animSrc(vec2 uv, out float hole) {
+  hole = 0.0;
+  if (uAnimCount < 0.5) return uv;
+  for (int k = 0; k < 8; k++) {
+    if (float(k) >= uAnimCount) break;
+    vec2 q = (uAnimInv[k] * vec3(uv, 1.0)).xy;
+    if (q.x >= 0.0 && q.y >= 0.0 && q.x <= 1.0 && q.y <= 1.0 && abs(rawZoneId(q) - uAnimId[k]) < 0.5) return q;
+  }
+  float id0 = rawZoneId(uv);
+  for (int k = 0; k < 8; k++) {
+    if (float(k) >= uAnimCount) break;
+    if (abs(id0 - uAnimId[k]) < 0.5) hole = 1.0;
+  }
+  return uv;
+}
+vec3 albedo(vec2 uv) {
+  float hole; vec2 q = animSrc(uv, hole);
+  return hole > 0.5 ? vec3(0.0) : texture(uAlbedo, q).rgb;
+}
 float depthAt(vec2 uv) { return texture(uDepth, uv).r; }
 vec3 normalAt(vec2 uv) { return normalize(texture(uNormal, uv).xyz * 2.0 - 1.0); }
-vec4 zoneRaw(vec2 uv) { return texelFetch(uZones, ivec2(clamp(uv, 0.0, 0.9999) * uZoneRes), 0); }
+vec4 zoneRaw(vec2 uv) {
+  float hole; vec2 q = animSrc(uv, hole);
+  vec4 z = texelFetch(uZones, ivec2(clamp(q, 0.0, 0.9999) * uZoneRes), 0);
+  return hole > 0.5 ? vec4(0.0, 0.0, 0.5, z.a) : z;
+}
 int zoneId(vec2 uv) { return int(zoneRaw(uv).r * 255.0 + 0.5); }
 int zoneTypeAt(vec2 uv) { return int(zoneRaw(uv).g * 255.0 + 0.5); }
 float maskAt(vec2 uv) { return texture(uZones, uv).a; }
-vec4 zoneGeom(int id) { return texelFetch(uZoneInfo, ivec2(id, 0), 0); }
+vec4 zoneGeom(int id) {
+  vec4 g = texelFetch(uZoneInfo, ivec2(id, 0), 0);
+  for (int k = 0; k < 8; k++) {
+    if (float(k) >= uAnimCount) break;
+    if (abs(float(id) - uAnimId[k]) < 0.5) { g.xy = (uAnimFwd[k] * vec3(g.xy, 1.0)).xy; g.zw *= uAnimScale[k]; }
+  }
+  return g;
+}
 vec4 zoneMeta(int id) { return texelFetch(uZoneInfo, ivec2(id, 1), 0); }
-float edgeImg(vec2 uv) { return texture(uEdges, uv).r; }
-float edgeZone(vec2 uv) { return texture(uEdges, uv).g; }
-float glowOpen(vec2 uv) { return texture(uEdges, uv).b; }   // halo flou autour des ouvertures
-float glowLines(vec2 uv) { return texture(uEdges, uv).a; }  // halo flou autour des contours de calques
+vec4 edgesAt(vec2 uv) {
+  if (uAnimCount < 0.5) return texture(uEdges, uv);
+  float hole; vec2 q = animSrc(uv, hole);
+  return hole > 0.5 ? vec4(0.0) : texture(uEdges, q);
+}
+float edgeImg(vec2 uv) { return edgesAt(uv).r; }
+float edgeZone(vec2 uv) { return edgesAt(uv).g; }
+float glowOpen(vec2 uv) { return edgesAt(uv).b; }   // halo flou autour des ouvertures
+float glowLines(vec2 uv) { return edgesAt(uv).a; }  // halo flou autour des contours de calques
 vec2 asp(vec2 uv) { return vec2(uv.x * uAspect, uv.y); }
 bool isOpening(int t) { return t == T_FENETRE || t == T_PORTE || t == T_ROSACE; }
 
@@ -181,6 +222,7 @@ void main() {
   float tm = targetMask(vUv);
   vec3 bg = vec3(1.0, 0.96, 0.9) * uTargetBg * 0.3 * (0.6 + 0.4 * diffuseAt(vUv, normalize(vec3(-0.3, 0.6, 0.8))));
   c = mix(bg, c, tm);
+  if (uAnimCount > 0.5) { float hole; animSrc(vUv, hole); c *= 1.0 - hole * 0.92; } // place laissée vide par un calque animé
   outColor = vec4(c * maskAt(vUv), 1.0);
 }
 `;
