@@ -34,7 +34,8 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 - **Voix off et bruitages** sur une piste audio (volume, fondus), mixés à l'export.
 - **Tableaux composés** : un ensemble de tableaux sur plusieurs pistes, enregistré et réinséré d'un clic.
 - **Photos libres de droits** : recherche Wikimedia Commons intégrée, auteur et licence conservés dans le projet et les exports.
-- **Spectacles d'exemple** complets (Noël, 14 juillet, patrimoine, Halloween, mariage, fête de la musique), à garder en changeant de photo.
+- **Spectacles d'exemple** complets **avec musique et bruitages** (Noël, Nouvel An, 14 juillet, patrimoine, Halloween, mariage, fête de la musique), à garder en changeant de photo. Musiques CC BY 3.0 : voir `public/music/CREDITS.md`.
+- **Bruitages intégrés** fabriqués dans le navigateur (grelots, cloches, tonnerre, pluie, vent, feux d'artifice, applaudissements, chouette, loup, porte qui grince, vagues, oiseaux, feu, cœur, gong…) et recherche de sons libres sur Freesound.
 - **Storyboard PDF** pour le client et **calculateur de vidéoprojecteur** (lumens, nombre d'appareils, objectif).
 - **Éditeur de tableaux en code** (GLSL) avec aperçu en direct, bibliothèque personnelle partageable.
 - **Repères musicaux** (M pendant l'écoute) : aimantage et scénarios calés sur vos refrains.

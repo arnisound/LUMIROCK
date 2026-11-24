@@ -29,14 +29,14 @@ export const MOODS: { id: string; label: string; q: string }[] = [
 
 const API = 'https://api.openverse.org/v1/audio/';
 
-async function searchOne(q: string, page: number): Promise<{ results: MusicResult[]; more: boolean }> {
-  const params = new URLSearchParams({ q, license: 'cc0,by', category: 'music', page_size: '20', page: String(page), mature: 'false' });
+async function searchOne(q: string, page: number, category = 'music'): Promise<{ results: MusicResult[]; more: boolean }> {
+  const params = new URLSearchParams({ q, license: 'cc0,by', category, page_size: '20', page: String(page), mature: 'false' });
   const r = await fetch(`${API}?${params}`);
   if (r.status === 400 && page > 1) return { results: [], more: false };
   if (!r.ok) throw new Error(r.status === 429 ? 'Trop de recherches d’affilée : réessayez dans une minute.' : `Openverse : erreur ${r.status}`);
   const d = await r.json();
   const results: MusicResult[] = (d.results ?? [])
-    .filter((x: any) => x.url && (!x.duration || x.duration >= 30000))
+    .filter((x: any) => x.url && (category !== 'music' || !x.duration || x.duration >= 30000))
     .map((x: any) => ({
       id: x.id,
       title: x.title || 'Sans titre',
@@ -51,11 +51,11 @@ async function searchOne(q: string, page: number): Promise<{ results: MusicResul
 }
 
 /** Recherche : la phrase exacte d'abord ; si elle ne donne rien (l'API exige tous les mots), un mot à la fois, résultats mêlés. */
-export async function searchMusic(q: string, page = 1): Promise<{ results: MusicResult[]; more: boolean }> {
+export async function searchMusic(q: string, page = 1, category = 'music'): Promise<{ results: MusicResult[]; more: boolean }> {
   const words = q.split(/\s+/).filter(Boolean);
-  const exact = words.length > 1 ? await searchOne(q, page) : null;
+  const exact = words.length > 1 ? await searchOne(q, page, category) : null;
   if (exact && exact.results.length) return exact;
-  const parts = await Promise.all(words.slice(0, 4).map((w) => searchOne(w, page).catch(() => ({ results: [] as MusicResult[], more: false }))));
+  const parts = await Promise.all(words.slice(0, 4).map((w) => searchOne(w, page, category).catch(() => ({ results: [] as MusicResult[], more: false }))));
   const seen = new Set<string>();
   const results: MusicResult[] = [];
   for (let i = 0; i < 20; i++) for (const p of parts) {

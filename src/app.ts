@@ -7,6 +7,7 @@ import { CATEGORIES, CATEGORY_COLORS, COMMON_PARAMS, CustomFx, EFFECTS, EFFECT_M
 import { openFxEditor } from './ui/fxeditor';
 import { MidiController } from './midi';
 import { MOODS, MusicResult, fetchMusic, searchMusic } from './musiclib';
+import { SFX, renderSfx, toWav } from './sfx';
 import { IDENTITY, MAX_ANIM, PIVOTS, sceneAnims, zoneTransformAt } from './zoneanim';
 import { Renderer, SceneMaps, ViewMode, freezeStarts, showDuration, trackTimings } from './gl/renderer';
 import { MontageOptions, PALETTES, PALETTE_FX, SCENARIOS, autoMontage, compose, defaultShow, newClip } from './scenarios';
@@ -1021,7 +1022,7 @@ export class App {
       this.commonsCard(),
       h('h3', {}, 'Spectacles d’exemple, prêts à adapter'),
       h('div', { class: 'examples' }, ...EXAMPLES.map((ex) => h('button', { class: 'example', onclick: () => this.loadExample(ex) },
-        h('b', {}, ex.name), h('span', {}, ex.description)))),
+        h('b', {}, ex.name, ex.music ? h('small', { class: 'ex-music' }, ' ♪') : null), h('span', {}, ex.description)))),
       h('h3', {}, 'Ou partez d’un monument modèle'),
       h('div', { class: 'templates' },
         ...TEMPLATES.map((t) => {
@@ -1966,11 +1967,7 @@ export class App {
         } }, icon('music'), h('div', { class: 'dz-title' }, 'Importer une musique'), h('div', { class: 'dz-sub' }, 'MP3, WAV, OGG, M4A… analysée dans le navigateur')),
         h('p', { class: 'muted small' }, 'Le tempo et les temps forts sont détectés automatiquement : les effets pulsent sur le rythme et les tableaux se calent sur les mesures.'),
         this.musicLibCard(),
-        h('div', { class: 'card' },
-          h('div', { class: 'card-title' }, '♪ Voix off et bruitages'),
-          h('p', { class: 'muted small' }, 'Ajoutez une narration, des cloches, un orage… Le son est placé à la tête de lecture sur la piste audio, puis se déplace librement.'),
-          h('button', { class: 'btn ghost wide', onclick: () => this.importSound() }, icon('upload'), 'Ajouter un son'),
-        ),
+        this.soundsCard(),
         slider({ label: 'Tempo sans musique (BPM)', min: 60, max: 180, step: 1, value: show.bpm, onInput: (v) => {
           show.bpm = v;
           this.dirty = true;
@@ -2003,11 +2000,7 @@ export class App {
           ...['Basses', 'Médiums', 'Aigus'].map((l) => h('div', { class: 'meter' }, h('div', { class: 'meter-bar' }, h('i', {})), h('span', {}, l)))),
         h('p', { class: 'muted small' }, 'Dans « Réglages › Options avancées », chaque tableau peut réagir aux basses, aux médiums ou aux aigus — par exemple le portail qui pulse sur la grosse caisse et les fenêtres qui scintillent sur les cymbales. Essayez aussi le tableau « Égaliseur ».'),
       ),
-      h('div', { class: 'card' },
-        h('div', { class: 'card-title' }, '♪ Voix off et bruitages'),
-        h('p', { class: 'muted small' }, 'Ajoutez une narration, des cloches, un orage… Le son est placé à la tête de lecture sur la piste audio, puis se déplace librement.'),
-        h('button', { class: 'btn ghost wide', onclick: () => this.importSound() }, icon('upload'), 'Ajouter un son'),
-      ),
+      this.soundsCard(),
       h('div', { class: 'card' },
         h('div', { class: 'card-title' }, icon('flag'), ' Repères'),
         h('p', { class: 'muted small' }, 'Lancez la lecture et appuyez sur M à chaque changement important (couplet, refrain, final). Les scénarios se caleront sur ces repères, et les tableaux s’y aimantent.'),
@@ -2406,18 +2399,55 @@ export class App {
     }
   }
 
-  loadExample(ex: Example) {
+  async loadExample(ex: Example) {
+    this.pause();
     this.loadTemplate(ex.template, true);
+    this.audio = null;
     const show = this.project.show;
-    show.clips = compose(ex.scenario, ex.duration, null, show.bpm);
+    let analysis: AudioAnalysis | null = null;
+    if (ex.music) {
+      try {
+        this.busy('Chargement de la musique…');
+        const r = await fetch(`${import.meta.env.BASE_URL}music/${ex.music.file}`);
+        if (!r.ok) throw new Error(String(r.status));
+        const blob = await r.blob();
+        this.project.music = { title: ex.music.title, author: ex.music.author, license: 'CC BY 3.0', page: ex.music.page };
+        await this.loadAudio(blob, `${ex.music.title} — ${ex.music.author}`);
+        analysis = this.audio ? (this.audio as { analysis: AudioAnalysis }).analysis : null;
+      } catch (e) {
+        console.warn('musique d’exemple indisponible', e);
+      } finally {
+        this.busy(null);
+      }
+    }
+    show.clips = compose(ex.scenario, analysis ? analysis.duration : ex.duration, analysis, show.bpm);
     show.layers = [];
     ex.extras?.(show);
+    show.sounds = [];
+    const total = showDuration(show);
+    for (const s of ex.sounds ?? []) {
+      let t: number | null = typeof s.at === 'number' ? s.at : null;
+      if (s.at === 'fin') t = total;
+      else if (typeof s.at === 'string') {
+        const c = show.clips.find((x) => x.effect === s.at);
+        t = c ? c.start ?? 0 : null;
+      }
+      if (t === null) continue;
+      try {
+        await this.addSfx(s.sfx, t + (s.offset ?? 0), s.volume ?? 1, true);
+      } catch (e) {
+        console.warn('bruitage', s.sfx, e);
+      }
+    }
+    this.showTab = 'scenarios';
     this.project.name = ex.title;
     this.history.reset(this.project);
     this.selectedClip = null;
     this.goto('spectacle');
     this.scheduleSave();
-    toast(`Spectacle « ${ex.name} » chargé. Espace pour le lancer — puis importez votre photo en gardant le spectacle.`, 'ok', 6000);
+    this.refreshShowUI();
+    this.timeline.fit();
+    toast(`Spectacle « ${ex.name} » chargé${ex.music ? ' avec sa musique et ses bruitages' : ''}. Espace pour le lancer — puis importez votre photo en gardant le spectacle.`, 'ok', 6000);
   }
 
   loadTemplate(id: string, silent = false) {
@@ -2854,12 +2884,7 @@ export class App {
     try {
       this.busy('Lecture du son…');
       const buf = await decodeAudio(f);
-      const item: MediaItem = { id: uid('m'), name: f.name, kind: 'audio' };
-      (this.project.media ??= []).push(item);
-      this.mediaBlobs.set(item.id, f);
-      this.soundBuffers.set(item.id, buf);
-      const sc: SoundClip = { id: uid('s'), media: item.id, start: Math.round(this.time * 100) / 100, offset: 0, duration: Math.round(buf.duration * 100) / 100, srcDuration: buf.duration, volume: 1, fadeIn: 0.05, fadeOut: 0.3 };
-      (this.project.show.sounds ??= []).push(sc);
+      const sc = this.placeSound(f, buf, f.name, this.time);
       this.selectedSound = sc.id;
       this.timeline.selectedSound = sc.id;
       this.selectedClip = null;
@@ -2873,6 +2898,115 @@ export class App {
     } finally {
       this.busy(null);
     }
+  }
+
+  /** Ajoute un son à la médiathèque et le place sur la piste audio. */
+  private placeSound(blob: Blob, buf: AudioBuffer, name: string, start: number, volume = 1, credit?: string): SoundClip {
+    const item: MediaItem = { id: uid('m'), name, kind: 'audio', credit };
+    (this.project.media ??= []).push(item);
+    this.mediaBlobs.set(item.id, blob);
+    this.soundBuffers.set(item.id, buf);
+    const sc: SoundClip = { id: uid('s'), media: item.id, start: Math.max(0, Math.round(start * 100) / 100), offset: 0, duration: Math.round(buf.duration * 100) / 100, srcDuration: buf.duration, volume, fadeIn: 0.02, fadeOut: 0.3 };
+    (this.project.show.sounds ??= []).push(sc);
+    return sc;
+  }
+
+  private sfxCache = new Map<string, { blob: Blob; buf: AudioBuffer }>();
+
+  /** Bruitage intégré : calculé une fois, réutilisé ensuite. */
+  async addSfx(id: string, start: number, volume = 1, quiet = false) {
+    const def = SFX.find((x) => x.id === id);
+    if (!def) return null;
+    let c = this.sfxCache.get(id);
+    if (!c) {
+      const buf = await renderSfx(id);
+      c = { blob: toWav(buf), buf };
+      this.sfxCache.set(id, c);
+    }
+    const sc = this.placeSound(c.blob, c.buf, `${def.icon} ${def.name}`, start, volume);
+    if (!quiet) {
+      this.selectedSound = sc.id;
+      this.timeline.selectedSound = sc.id;
+      this.selectedClip = null;
+      this.refreshShowUI();
+      this.scheduleSave();
+      toast(`${def.icon} ${def.name} placé à ${fmtTime(sc.start)} sur la piste audio.`, 'ok');
+    }
+    return sc;
+  }
+
+  private previewSfx(id: string) {
+    renderSfx(id).then((buf) => {
+      this.ac ??= new AudioContext();
+      const s = this.ac.createBufferSource();
+      s.buffer = buf;
+      s.connect(this.ac.destination);
+      s.start();
+    }).catch(() => undefined);
+  }
+
+  private sfxSearch = { q: '', results: [] as MusicResult[], loading: false, error: '' };
+
+  private soundsCard() {
+    const S = this.sfxSearch;
+    const list = h('div', { class: 'mlib-list' });
+    const draw = () => {
+      clear(list);
+      if (S.loading) list.append(h('p', { class: 'muted small' }, 'Recherche…'));
+      if (S.error) list.append(h('p', { class: 'small err-text' }, S.error));
+      if (!S.loading && S.q && !S.results.length && !S.error) list.append(h('p', { class: 'muted small' }, 'Aucun résultat (essayez en anglais : bell, thunder, crowd…).'));
+      for (const m of S.results) list.append(h('div', { class: 'mlib-item' },
+        h('button', { class: 'btn ghost small mlib-play', title: 'Écouter', onclick: () => this.previewMusic(m, draw) }, this.musicLib.playing === m.id ? '■' : '▶'),
+        h('div', { class: 'mlib-text' }, h('b', {}, m.title), h('span', {}, `${m.author}${m.duration ? ' · ' + fmtTime(m.duration) : ''} · `, h('a', { href: m.page, target: '_blank', rel: 'noopener' }, m.license))),
+        h('button', { class: 'btn primary small', onclick: async () => {
+          try {
+            this.busy(`Téléchargement de « ${m.title} »…`);
+            const blob = await fetchMusic(m);
+            const buf = await decodeAudio(blob);
+            const sc = this.placeSound(blob, buf, m.title, this.time, 1, `${m.title} — ${m.author} — ${m.license} (${m.page})`);
+            this.selectedSound = sc.id;
+            this.timeline.selectedSound = sc.id;
+            this.refreshShowUI();
+            this.scheduleSave();
+            toast(`« ${m.title} » placé à ${fmtTime(sc.start)}. Crédit ajouté au projet.`, 'ok');
+          } catch {
+            toast('Téléchargement impossible pour ce son : ouvrez sa page pour le récupérer.', 'err');
+          } finally {
+            this.busy(null);
+          }
+        } }, 'Ajouter')));
+    };
+    const input = h('input', { type: 'search', placeholder: 'Freesound : bell, thunder, crowd, owl…', value: S.q });
+    const run = async () => {
+      S.q = input.value.trim();
+      if (!S.q) return;
+      S.loading = true;
+      S.error = '';
+      draw();
+      try {
+        S.results = (await searchMusic(S.q, 1, 'sound_effect')).results;
+      } catch (e) {
+        S.error = e instanceof Error ? e.message : 'Recherche impossible';
+      }
+      S.loading = false;
+      draw();
+    };
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') run();
+    });
+    draw();
+    return h('div', { class: 'card' },
+      h('div', { class: 'card-title' }, '♪ Bruitages et voix off'),
+      h('p', { class: 'muted small' }, 'Cliquez un bruitage pour le placer à la tête de lecture (▶ pour l’écouter). Ils sont fabriqués par Lumirock : libres de droits, sans téléchargement.'),
+      h('div', { class: 'sfx-grid' }, ...SFX.map((x) => h('div', { class: 'sfx-item' },
+        h('button', { class: 'sfx-add', title: 'Placer à la tête de lecture', onclick: () => this.addSfx(x.id, this.time) }, h('span', {}, x.icon), x.name),
+        h('button', { class: 'sfx-play', title: 'Écouter', onclick: () => this.previewSfx(x.id) }, '▶')))),
+      h('div', { class: 'lbl small', style: 'margin-top:8px' }, 'Plus de sons libres (Freesound, CC0 / CC BY)'),
+      h('div', { class: 'row' }, input, h('button', { class: 'btn ghost', onclick: run }, 'Chercher')),
+      list,
+      h('button', { class: 'btn ghost wide', onclick: () => this.importSound() }, icon('upload'), 'Importer un son ou une voix off'),
+    );
   }
 
   deleteSound(id: string) {

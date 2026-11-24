@@ -102,6 +102,18 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    id: 'nouvelan', name: 'Réveillon du Nouvel An', description: 'Ciel étoilé, décompte géant, feux d’artifice et vœux.', palette: ['#ffd36b', '#7a5cff'],
+    steps: [
+      { effect: 'etoiles', weight: 1.0 },
+      { effect: 'texte', weight: 0.8, params: { text: 'Bonne soirée', colorA: '#ffe08a' }, transition: 'iris' },
+      { effect: 'neon', weight: 0.8 },
+      { effect: 'poursuite', weight: 0.8, params: { colorA: '#ffd36b', colorB: '#7a5cff' } },
+      { effect: 'decompte', weight: 1.1, params: { text: 'Bonne année !' }, transition: 'cut' },
+      { effect: 'feuxartifice', weight: 1.4, transition: 'flash' },
+      { effect: 'texte', weight: 0.8, params: { text: 'Meilleurs vœux', colorA: '#ffe08a', style: 4 } },
+    ],
+  },
+  {
     id: 'saisons', name: 'Les quatre saisons', description: 'Printemps fleuri, été lumineux, automne en feu, hiver enneigé.', palette: ['#ffc46b', '#6fb8ff'],
     steps: [
       { effect: 'allumage', weight: 0.7 },

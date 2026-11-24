@@ -417,3 +417,11 @@ header.top .steps { flex-shrink: 1; min-width: 0; }
 .mlib-text a { color: inherit; }
 .mlib-play { width: 30px; padding: 4px 0; }
 .midi-row b { white-space: nowrap; }
+.sfx-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.sfx-item { display: flex; border: 1px solid var(--line2); border-radius: 8px; overflow: hidden; background: var(--bg); }
+.sfx-item button { border: 0; background: none; color: var(--text); cursor: pointer; font-size: 11.5px; }
+.sfx-add { flex: 1; display: flex; align-items: center; gap: 6px; padding: 6px 6px; text-align: left; }
+.sfx-add span { font-size: 15px; }
+.sfx-add:hover, .sfx-play:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.sfx-play { width: 26px; border-left: 1px solid var(--line2) !important; opacity: .75; }
+.ex-music { color: var(--accent); }

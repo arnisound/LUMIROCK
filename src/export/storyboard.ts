@@ -80,6 +80,7 @@ ${o.musicName ? `<div><b>Musique :</b> ${esc(o.musicName)}${o.analysis ? ` (${o.
 ${(show.sounds ?? []).length ? `<div><b>Voix off / bruitages :</b> ${(show.sounds ?? []).length}</div>` : ''}
 ${cr ? `<div class="small">Photo : ${esc(cr.author)} — ${esc(cr.license)}</div>` : ''}
 ${o.project.music ? `<div class="small">Musique : « ${esc(o.project.music.title)} » ${esc(o.project.music.author)} — ${esc(o.project.music.license)} (${esc(o.project.music.page)})</div>` : ''}
+${(o.project.media ?? []).filter((m) => m.credit).map((m) => `<div class="small">Bruitage : ${esc(m.credit!)}</div>`).join('')}
 </div></div>
 <table>${rows.map((x, i) => `<tr><td class="n">${i + 1}</td><td class="img"><img src="${x.img}"></td>
 <td><div class="name">${esc(x.name)}<span class="cat" style="background:${CATEGORY_COLORS[x.cat as keyof typeof CATEGORY_COLORS] ?? '#888'}">${esc(x.cat)}</span></div>

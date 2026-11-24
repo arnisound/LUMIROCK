@@ -96,6 +96,7 @@ export interface MediaItem {
   id: string;
   name: string;
   kind: 'image' | 'video' | 'audio';
+  credit?: string; // auteur et licence (bruitage téléchargé)
 }
 
 export interface Show {
