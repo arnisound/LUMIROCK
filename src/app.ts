@@ -1061,8 +1061,9 @@ export class App {
       h('div', { class: 'card' },
         h('div', { class: 'card-title' }, 'Assistants'),
         slider({ label: 'Sensibilité (plus = davantage de résultats)', min: 0, max: 1, step: 0.05, value: this.detectSens, onInput: (v) => (this.detectSens = v) }),
-        h('button', { class: 'btn primary wide', disabled: !sel || sel.type === 'silhouette', title: 'Sélectionnez un calque bien détouré (une fenêtre par exemple) : Lumirock cherche les éléments qui lui ressemblent', onclick: () => this.findSimilarZones() }, icon('wand'), sel && sel.type !== 'silhouette' ? `Trouver les éléments identiques à « ${sel.name} »` : 'Trouver les identiques (sélectionnez un exemple)'),
-        h('p', { class: 'muted small' }, 'Le plus fiable : détourez UNE fenêtre (baguette IA ou rectangle), sélectionnez-la, puis cliquez ci-dessus.'),
+        h('button', { class: 'btn primary wide', disabled: !sel || sel.type === 'silhouette', title: 'Cherche les éléments semblables à l’exemple sélectionné, sur la même rangée (le plus fiable)', onclick: () => this.findSimilarZones('row') }, icon('wand'), sel && sel.type !== 'silhouette' ? `Identiques sur la même rangée que « ${sel.name} »` : 'Trouver les identiques (sélectionnez un exemple)'),
+        h('button', { class: 'btn ghost wide', disabled: !sel || sel.type === 'silhouette', onclick: () => this.findSimilarZones('all') }, 'Chercher sur toute la façade'),
+        h('p', { class: 'muted small' }, 'Le plus fiable : redressez la photo, détourez UNE fenêtre par étage (baguette IA ou rectangle), sélectionnez-la, puis « Identiques sur la même rangée ». Recommencez pour chaque étage.'),
         h('button', { class: 'btn ghost wide', onclick: () => this.autoDetect() }, icon('magic'), 'Détection automatique (approximative)'),
         aiBtn,
         this.aiDepth ? h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: this.useAi, onchange: (e: Event) => {
@@ -2034,13 +2035,13 @@ export class App {
     }
   }
 
-  findSimilarZones() {
+  findSimilarZones(scope: 'row' | 'all' = 'row') {
     const ref = this.project.zones.find((z) => z.id === this.zoneEditor.selected);
     if (!this.facade || !ref) return;
     this.busy('Recherche des éléments identiques…');
     setTimeout(() => {
       try {
-        const found = findSimilar(this.facade!, ref, this.project.zones, this.detectSens);
+        const found = findSimilar(this.facade!, ref, this.project.zones, this.detectSens, scope);
         if (!found.length) {
           toast('Aucun élément identique trouvé. Augmentez la sensibilité, ou vérifiez que l’exemple est bien détouré.', 'err', 6000);
           return;

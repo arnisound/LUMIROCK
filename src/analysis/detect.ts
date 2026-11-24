@@ -173,7 +173,7 @@ function integral(a: Float32Array, W: number, H: number) {
 }
 
 /** Corrélation normalisée du gabarit T (tw×th) placé en (x, y) dans A. */
-function nccMap(A: Float32Array, W: number, H: number, T: Float32Array, tw: number, th: number) {
+function nccMap(A: Float32Array, W: number, H: number, T: Float32Array, tw: number, th: number, yA = 0, yB = H - th) {
   const { S, Q } = integral(A, W, H);
   const n = tw * th;
   let tm = 0;
@@ -188,7 +188,7 @@ function nccMap(A: Float32Array, W: number, H: number, T: Float32Array, tw: numb
   const ts = Math.sqrt(tv) || 1e-6;
   const out = new Float32Array(W * H).fill(-1);
   const W1 = W + 1;
-  for (let y = 0; y + th <= H; y++)
+  for (let y = Math.max(0, yA); y <= Math.min(H - th, yB); y++)
     for (let x = 0; x + tw <= W; x++) {
       const a = y * W1 + x, b = a + tw, c = a + th * W1, d = c + tw;
       const sum = S[d] - S[b] - S[c] + S[a];
@@ -221,13 +221,29 @@ function iou(a: { x0: number; y0: number; x1: number; y1: number }, b: { x0: num
 }
 
 /** Trouve les éléments semblables au calque `ref` et renvoie les nouveaux calques. */
-export function findSimilar(img: ImageData, ref: Zone, existing: Zone[], sensitivity = 0.5): Zone[] {
+export function findSimilar(img: ImageData, ref: Zone, existing: Zone[], sensitivity = 0.5, scope: 'row' | 'all' = 'row'): Zone[] {
   const rb = bbox(ref.points);
-  const W = Math.min(360, img.width), H = Math.round((W * img.height) / img.width);
+  // résolution adaptée à la taille de l'exemple (au moins ~22 px de large pour le gabarit)
+  const want = Math.round(22 / Math.max(0.005, rb.x1 - rb.x0));
+  const W = Math.min(img.width, Math.max(360, Math.min(scope === 'row' ? 1400 : 900, want)));
+  const H = Math.round((W * img.height) / img.width);
   const { L, G } = grayAt(img, W, H);
-  const thr = 0.78 - sensitivity * 0.28;
+  const thr = scope === 'row' ? 0.42 - sensitivity * 0.3 : 0.5 - sensitivity * 0.3;
+  const rowY0 = rb.y0 - (rb.y1 - rb.y0) * 0.25, rowY1 = rb.y1 + (rb.y1 - rb.y0) * 0.25;
   type Hit = { x: number; y: number; s: number; score: number };
   const hits: Hit[] = [];
+  // apparence (luminosité moyenne et contraste intérieurs) : distingue une fenêtre sombre d'une niche en pierre claire
+  const LI = integral(L, W, H);
+  const stats = (x: number, y: number, w: number, h: number) => {
+    const W1 = W + 1;
+    const x0 = Math.max(0, Math.min(W, x)), y0 = Math.max(0, Math.min(H, y)), x1 = Math.max(0, Math.min(W, x + w)), y1 = Math.max(0, Math.min(H, y + h));
+    const n = Math.max(1, (x1 - x0) * (y1 - y0));
+    const a = y0 * W1 + x0, b = y0 * W1 + x1, c = y1 * W1 + x0, d = y1 * W1 + x1;
+    const m = (LI.S[d] - LI.S[b] - LI.S[c] + LI.S[a]) / n;
+    const q = (LI.Q[d] - LI.Q[b] - LI.Q[c] + LI.Q[a]) / n;
+    return { m, sd: Math.sqrt(Math.max(0, q - m * m)) };
+  };
+  const refStats = stats(Math.round(rb.x0 * W), Math.round(rb.y0 * H), Math.round((rb.x1 - rb.x0) * W), Math.round((rb.y1 - rb.y0) * H));
   for (const sc of [0.88, 1, 1.12]) {
     const tw = Math.max(5, Math.round((rb.x1 - rb.x0) * W * sc)), th = Math.max(5, Math.round((rb.y1 - rb.y0) * H * sc));
     if (tw >= W - 2 || th >= H - 2) continue;
@@ -241,24 +257,32 @@ export function findSimilar(img: ImageData, ref: Zone, existing: Zone[], sensiti
         TL[j * tw + i] = L[sy * W + sx];
         TG[j * tw + i] = G[sy * W + sx];
       }
-    const m1 = nccMap(L, W, H, TL, tw, th);
-    const m2 = nccMap(G, W, H, TG, tw, th);
-    for (let y = 0; y + th <= H; y++)
+    const bandA = scope === 'row' ? Math.max(0, Math.floor(rowY0 * H) - 3) : 0;
+    const bandB = scope === 'row' ? Math.ceil(rowY1 * H) + 3 : H;
+    const m1 = nccMap(L, W, H, TL, tw, th, bandA, bandB);
+    const m2 = nccMap(G, W, H, TG, tw, th, bandA, bandB);
+    const yA = scope === 'row' ? Math.max(0, Math.floor(rowY0 * H)) : 0;
+    const yB = scope === 'row' ? Math.min(H - th, Math.ceil(rowY1 * H) - th) : H - th;
+    for (let y = yA; y <= yB; y++)
       for (let x = 0; x + tw <= W; x++) {
-        const v = 0.45 * m1[y * W + x] + 0.55 * m2[y * W + x];
-        if (v < thr - 0.14) continue;
+        const v = 0.6 * m1[y * W + x] + 0.4 * m2[y * W + x];
+        if (v < thr - 0.3) continue;
         // maximum local
         let best = true;
         for (let dy = -2; dy <= 2 && best; dy++)
           for (let dx = -2; dx <= 2; dx++) {
             const xx = x + dx, yy = y + dy;
             if (xx < 0 || yy < 0 || xx + tw > W || yy + th > H || (!dx && !dy)) continue;
-            if (0.45 * m1[yy * W + xx] + 0.55 * m2[yy * W + xx] > v) {
+            if (0.6 * m1[yy * W + xx] + 0.4 * m2[yy * W + xx] > v) {
               best = false;
               break;
             }
           }
-        if (best) hits.push({ x: (x + tw / 2) / W, y: (y + th / 2) / H, s: sc, score: v });
+        if (best) {
+          const st = stats(x, y, tw, th);
+          const look = Math.abs(st.m - refStats.m) * 2.2 + Math.abs(st.sd - refStats.sd) * 1.2;
+          hits.push({ x: (x + tw / 2) / W, y: (y + th / 2) / H, s: sc, score: v - look });
+        }
       }
   }
   hits.sort((a, b) => b.score - a.score);
@@ -274,12 +298,14 @@ export function findSimilar(img: ImageData, ref: Zone, existing: Zone[], sensiti
   for (let pass = 0; pass < 2; pass++)
   for (const hit of hits) {
     if ((hit as { used?: boolean }).used) continue;
-    const need = thr - bonus(hit);
+    const need = scope === 'row' ? thr : thr - bonus(hit);
     if (hit.score < need || (pass === 0 && hit.score < thr)) continue;
     const pts = ref.points.map(([x, y]) => [hit.x + (x - rcx) * hit.s, hit.y + (y - rcy) * hit.s] as Pt);
     const bb = bbox(pts);
     if (bb.x0 < 0 || bb.y0 < 0 || bb.x1 > 1 || bb.y1 > 1) continue;
-    if (taken.some((t) => iou(t, bb) > 0.2)) continue;
+    // deux éléments ne se chevauchent pas : on refuse tout recouvrement notable
+    const overlap = (t: typeof bb) => Math.max(0, Math.min(t.x1, bb.x1) - Math.max(t.x0, bb.x0)) * Math.max(0, Math.min(t.y1, bb.y1) - Math.max(t.y0, bb.y0));
+    if (taken.some((t) => overlap(t) > 0.12 * Math.min((t.x1 - t.x0) * (t.y1 - t.y0), (bb.x1 - bb.x0) * (bb.y1 - bb.y0)) || iou(t, bb) > 0.2)) continue;
     taken.push(bb);
     (hit as { used?: boolean }).used = true;
     anchors.push({ x: hit.x, y: hit.y });
