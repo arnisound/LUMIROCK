@@ -36,7 +36,7 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 - **Voix off et bruitages** sur une piste audio (volume, fondus), mixés à l'export.
 - **Tableaux composés** : un ensemble de tableaux sur plusieurs pistes, enregistré et réinséré d'un clic.
 - **Photos libres de droits** : recherche Wikimedia Commons intégrée, auteur et licence conservés dans le projet et les exports.
-- **Spectacles d'exemple** complets **avec musique et bruitages** (Noël, Nouvel An, 14 juillet, patrimoine, Halloween, mariage, fête de la musique), à garder en changeant de photo. Musiques CC BY 3.0 : voir `public/music/CREDITS.md`.
+- **Spectacles d'exemple** complets **avec musique et bruitages** (Grand show 3D, Noël, Nouvel An, 14 juillet, patrimoine, Halloween, mariage, fête de la musique), à garder en changeant de photo. Musiques CC BY 3.0 : voir `public/music/CREDITS.md`.
 - **Bruitages intégrés** fabriqués dans le navigateur (grelots, cloches, tonnerre, pluie, vent, feux d'artifice, applaudissements, chouette, loup, porte qui grince, vagues, oiseaux, feu, cœur, gong…) et recherche de sons libres sur Freesound.
 - **Storyboard PDF** pour le client et **calculateur de vidéoprojecteur** (lumens, nombre d'appareils, objectif).
 - **Éditeur de tableaux en code** (GLSL) avec aperçu en direct, bibliothèque personnelle partageable.
@@ -55,6 +55,7 @@ Il produit des médias destinés aux professionnels du mapping (Resolume, MadMap
 ## Les tableaux
 
 - **Lumière** : Allumage, Course du soleil (ombres qui tournent), Faisceaux fantômes, Orage, Mille bougies
+- **Illusions 3D** : Blocs en relief, Volets pivotants, Tunnel dans la façade, Pièces secrètes (une pièce en 3D derrière chaque fenêtre), Éclatement, Scanner 3D, Façade liquide, Trou noir, Ruban de lumière 3D (passe derrière les colonnes), Tuiles qui se retournent, Les pierres tombent, L'œil géant
 - **Saisons et fêtes** : Traîneau du Père Noël, Calendrier de l'Avent, Décompte du Nouvel An, Cœurs de la Saint-Valentin, Lapin de Pâques, Printemps en fleurs, Surf au coucher du soleil, Feuilles d'automne, Sorcière sur son balai, Fenêtres citrouilles, Minuteur d'avant-spectacle
 - **Console lumière** (calés sur le tempo) : Poursuite (chase), Stroboscope, Alternance, Pulsation d'intensité, Balayage aller-retour
 - **Architecture** : Dessin d'architecte, Pierres vivantes (extrusion), Effondrement / reconstruction, Relief vivant 3D (parallaxe), Puzzle, Scan laser, Désintégration, Étincelles d'architecture, Calques animés (portes qui s'ouvrent, fissure qui progresse…)

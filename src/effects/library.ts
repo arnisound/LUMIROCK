@@ -18,7 +18,7 @@ export interface ParamDef {
   options?: { value: number; label: string }[];
 }
 
-export type Category = 'Lumière' | 'Console lumière' | 'Saisons et fêtes' | 'Architecture' | 'Matières' | 'Nature' | 'Graphique' | 'Illusions' | 'Mes tableaux';
+export type Category = 'Lumière' | 'Console lumière' | 'Illusions 3D' | 'Saisons et fêtes' | 'Architecture' | 'Matières' | 'Nature' | 'Graphique' | 'Illusions' | 'Mes tableaux';
 export type Mood = 'calme' | 'moyen' | 'fort';
 
 export interface EffectDef {
@@ -114,6 +114,12 @@ float twinkle(vec2 pa, float scale, float dens) {
   float d = length(f - o);
   return smoothstep(0.12, 0.0, d) * (0.5 + 0.5 * sin(uT * (3.0 + h * 9.0) + h * 40.0));
 }
+`;
+
+const D3 = `
+// --- outils 3D
+vec2 toUv(vec2 p) { return vec2(p.x / uAspect, p.y); }
+vec3 litAt(vec2 p) { vec2 u = toUv(p); return vec3(0.2 + 0.95 * lum(albedo(clamp(u, 0.0, 1.0)))); }
 `;
 
 export const EFFECTS: EffectDef[] = [
@@ -1796,6 +1802,619 @@ vec3 effect(vec2 uv) {
   return (uColA * bar * 1.6 + uColB * tr) * stoneLit(uv);
 }`,
   },
+  // ─────────────────────────── ILLUSIONS 3D ───────────────────────────
+  {
+    id: 'blocs3d', name: 'Blocs en relief', category: 'Illusions 3D', mood: 'fort', defaultDuration: 14,
+    description: 'La façade se découpe en blocs qui sortent du mur vers le public en perspective, en vague, sur le tempo ou depuis le centre.',
+    tags: ['musique', 'national', 'patrimoine'],
+    params: [I(), S(), CA('#7fdcff', 'Arêtes lumineuses'), CB('#2a3cff', 'Flancs'),
+      SEL('mode', 'Mouvement', 'uParamC', ['Vague diagonale', 'Au hasard sur le tempo', 'Ondes depuis le centre', 'Respiration'], 0),
+      R('cells', 'Taille des blocs (petits → grands)', 'uParamA', 0.4), R('depth', 'Profondeur du relief', 'uParamB', 0.6), R('edge', 'Arêtes lumineuses', 'uParamD', 0.6)],
+    glsl: HELPERS + SDF + D3 + `
+float blockH(vec2 cell, vec2 cc) {
+  int m = int(uParamC + 0.5);
+  float t = uT * uSpeed;
+  float h;
+  if (m == 0) h = 0.5 + 0.5 * sin((cell.x + cell.y) * 0.55 - t * 2.2);
+  else if (m == 1) {
+    float b = uBeatIndex;
+    float h0 = hash21(cell + floor(b)), h1 = hash21(cell + floor(b) + 1.0);
+    h = step(0.55, mix(h0, h1, smoothstep(0.0, 0.35, uBeatPhase)));
+    h = mix(step(0.55, h0), step(0.55, h1), smoothstep(0.0, 0.25, uBeatPhase));
+  } else if (m == 2) h = 0.5 + 0.5 * sin(length(cell - cc) * 0.9 - t * 3.0);
+  else h = (0.5 + 0.5 * sin(t * 1.5)) * (0.4 + 0.6 * hash21(cell));
+  float env = sat(uP * 8.0) * sat((1.0 - uP) * 8.0);
+  return h * env;
+}
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  float N = floor(28.0 - uParamA * 20.0);
+  float cs = uAspect / N;
+  vec2 VP = vec2(uAspect * 0.5, 0.45);
+  float kmax = 0.08 + uParamB * 0.2;
+  vec2 cc = floor(VP / cs);
+  vec2 d = pa - VP;
+  vec2 mid = pa - d * kmax * 0.5;
+  vec2 pc = floor(mid / cs);
+  float bestT = -1.0;
+  vec2 bestQ = pa;
+  float face = 0.0;
+  vec2 bestCell = vec2(0.0);
+  for (int j = -3; j <= 3; j++) for (int i = -3; i <= 3; i++) {
+    vec2 cell = pc + vec2(float(i), float(j));
+    vec2 r0 = cell * cs, r1 = r0 + cs;
+    float h = blockH(cell, cc);
+    float umin = 1.0 - h * kmax;
+    float lo = umin, hi = 1.0, ax = 0.0;
+    if (abs(d.x) < 1e-6) { if (VP.x < r0.x || VP.x > r1.x) continue; }
+    else { float a = (r0.x - VP.x) / d.x, b = (r1.x - VP.x) / d.x; float ta = min(a, b); hi = min(hi, max(a, b)); if (ta > lo) { lo = ta; ax = 1.0; } }
+    if (abs(d.y) < 1e-6) { if (VP.y < r0.y || VP.y > r1.y) continue; }
+    else { float a = (r0.y - VP.y) / d.y, b = (r1.y - VP.y) / d.y; float ta = min(a, b); hi = min(hi, max(a, b)); if (ta > lo) { lo = ta; ax = 2.0; } }
+    if (lo > hi + 1e-6) continue;
+    float t = 1.0 - lo;
+    if (t > bestT) { bestT = t; bestQ = VP + d * lo; face = ax; bestCell = cell; }
+  }
+  if (bestT < 0.0) return vec3(0.01);
+  float hn = bestT / kmax;
+  if (face < 0.5) {
+    vec2 r0 = bestCell * cs;
+    vec2 lq = (bestQ - r0) / cs;
+    float e = min(min(lq.x, 1.0 - lq.x), min(lq.y, 1.0 - lq.y));
+    vec3 c = litAt(bestQ) * (0.2 + 0.85 * hn);
+    c += uColA * uParamD * smoothstep(0.05, 0.0, e) * (0.3 + hn) * 1.2;
+    return c;
+  }
+  // flancs : ombrés selon leur orientation (lumière venant d'en haut à gauche)
+  float sh = face < 1.5 ? (d.x > 0.0 ? 0.25 : 0.6) : (d.y > 0.0 ? 0.08 : 0.85);
+  return mix(uColB, vec3(1.0), 0.3) * sh * (0.5 + 0.8 * hn);
+}`,
+  },
+  {
+    id: 'volets3d', name: 'Volets pivotants', category: 'Illusions 3D', mood: 'fort', defaultDuration: 14,
+    description: 'La façade se découpe en lames verticales qui pivotent en 3D comme des volets géants, révélant une face dorée.',
+    tags: ['national', 'mariage', 'musique', 'noel'],
+    params: [I(), S(), CA('#ffcf5a', 'Face cachée'), CB('#7a2bff', '2e couleur'), R('count', 'Nombre de lames', 'uParamA', 0.4), R('spread', 'Décalage de la vague', 'uParamB', 0.6), TOG('beat', 'Pivoter sur le tempo', 'uParamC', false)],
+    glsl: HELPERS + SDF + D3 + `
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  float N = floor(4.0 + uParamA * 20.0);
+  float w = uAspect / N;
+  float D = 2.2;
+  float vpy = 0.5;
+  float ci = floor(pa.x / w);
+  vec3 col = vec3(0.015);
+  float bestZ = -1e9;
+  for (int k = -1; k <= 1; k++) {
+    float i = ci + float(k);
+    float cx = (i + 0.5) * w;
+    float ph = (uParamC > 0.5 ? (uBeatIndex + uBeatPhase) * 0.25 : uT * uSpeed * 0.22) - i / N * uParamB * 1.5;
+    float th = PI * (floor(ph) + smoothstep(0.25, 0.75, fract(ph)));
+    th *= sat(uP * 10.0);
+    float c = cos(th), sn = sin(th);
+    float X = pa.x - cx;
+    float den = c * D + X * sn;
+    if (abs(den) < 1e-4) continue;
+    float sl = X * D / den;
+    if (abs(sl) > w * 0.5) continue;
+    float z = sl * sn;
+    float sc = D / (D - z);
+    if (sc <= 0.0) continue;
+    float y = vpy + (pa.y - vpy) / sc;
+    if (y < 0.0 || y > 1.0) continue;
+    if (z <= bestZ) continue;
+    bestZ = z;
+    float shade = 0.3 + 0.7 * abs(c);
+    float spec = pow(sat(1.0 - abs(abs(c) - 0.92) * 8.0), 2.0);
+    if (c > 0.0) col = litAt(vec2(cx + sl, y)) * shade;
+    else {
+      vec3 g = mix(uColA, uColB, sat(y * 0.8 + 0.1 * sin(i)));
+      col = g * (0.5 + 0.4 * fbm(vec2(sl * 30.0, y * 12.0))) * shade * 0.85;
+    }
+    col += vec3(1.0) * spec * 0.6;
+    float ed = abs(abs(sl) - w * 0.5);
+    col += uColA * smoothstep(w * 0.03, 0.0, ed) * 0.6;
+  }
+  return col;
+}`,
+  },
+  {
+    id: 'tunnel', name: 'Tunnel dans la façade', category: 'Illusions 3D', mood: 'fort', defaultDuration: 14,
+    description: 'Le mur s’ouvre sur un couloir de pierre infini dans lequel on avance, rythmé par des anneaux de lumière. Sur toute la façade ou dans chaque ouverture.',
+    tags: ['halloween', 'patrimoine', 'musique'],
+    params: [I(), S(), CA('#ffb347', 'Lumières'), CB('#7fd4ff', 'Lueur du fond'), SEL('where', 'Où', 'uParamC', ['Toute la façade', 'Dans chaque fenêtre et porte'], 0), R('size', 'Taille de l’ouverture', 'uParamA', 0.8), TOG('beat', 'Anneaux sur le tempo', 'uParamB', true)],
+    glsl: HELPERS + SDF + D3 + `
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  vec2 c, hs;
+  if (uParamC > 0.5) {
+    int id = zoneId(uv);
+    int ty = zoneTypeAt(uv);
+    if (id == 0 || !isOpening(ty)) return stoneLit(uv) * 0.18;
+    vec4 g = zoneGeom(id);
+    c = asp(g.xy);
+    hs = vec2(g.z * uAspect, g.w) * 0.5;
+  } else {
+    c = vec2(uAspect * 0.5, 0.48);
+    hs = vec2(uAspect * 0.45, 0.45) * (0.4 + 0.6 * uParamA);
+  }
+  float open = smoothstep(0.0, 0.18, uP) * smoothstep(1.0, 0.85, uP);
+  vec2 h2 = hs * max(open, 0.001);
+  vec2 d = pa - c;
+  vec2 q = d / h2;
+  float m = max(abs(q.x), abs(q.y));
+  if (m > 1.0) {
+    float rim = smoothstep(1.12, 1.0, max(abs(d.x) / (h2.x + 0.01), abs(d.y) / (h2.y + 0.01)));
+    return stoneLit(uv) * (0.14 - 0.12 * rim * open);
+  }
+  float z = 1.0 / max(m, 0.03);
+  float t = uT * uSpeed * 1.6;
+  float wz = z + t;
+  vec3 col;
+  if (abs(q.y) < abs(q.x) || q.y > 0.0) {
+    float v = abs(q.x) > abs(q.y) ? q.y / abs(q.x) : q.x / abs(q.y);
+    vec2 b = vec2(v * 3.0, wz * 1.3);
+    b.x += 0.5 * mod(floor(b.y), 2.0);
+    vec2 f = fract(b);
+    float mortar = smoothstep(0.0, 0.06, f.x) * smoothstep(1.0, 0.94, f.x) * smoothstep(0.0, 0.1, f.y) * smoothstep(1.0, 0.9, f.y);
+    col = vec3(0.62, 0.55, 0.47) * (0.55 + 0.45 * hash21(floor(b))) * (0.08 + 0.92 * mortar);
+    if (abs(q.y) > abs(q.x)) col *= 0.7;
+  } else {
+    vec2 f = vec2(q.x / abs(q.y) * 2.0, wz * 1.0);
+    col = vec3(0.4, 0.36, 0.32) * (0.6 + 0.4 * mod(floor(f.x) + floor(f.y), 2.0));
+  }
+  float ringPos = uParamB > 0.5 ? fract(wz * 0.25 - uBeatPhase * 0.0) : fract(wz * 0.25);
+  float ring = exp(-pow((fract(wz * 0.25) - 0.5) * 9.0, 2.0));
+  if (uParamB > 0.5) ring *= 0.6 + 0.8 * uBeat;
+  float fog = exp(-(z - 1.0) * 0.28);
+  col = col * fog * (0.5 + 0.9 * ring) + uColA * ring * fog * 0.6;
+  col += uColB * exp(-m * 9.0) * 1.4;
+  return col * 1.4;
+}`,
+  },
+  {
+    id: 'pieces', name: 'Pièces secrètes', category: 'Illusions 3D', mood: 'calme', defaultDuration: 16,
+    description: 'Derrière chaque fenêtre apparaît une pièce en 3D (salon, bibliothèque, chambre…) qui s’allume ; la perspective bouge doucement comme si l’on se déplaçait devant le bâtiment.',
+    tags: ['noel', 'patrimoine', 'halloween'],
+    params: [I(), S(), CA('#ffd08a', 'Lumière des pièces'), CB('#2b3a6b', 'Lueur extérieure'), R('wall', 'Lumière sur les murs', 'uParamA', 0.15), R('sway', 'Mouvement de la perspective', 'uParamB', 0.6), R('depth', 'Profondeur des pièces', 'uParamC', 0.6)],
+    glsl: HELPERS + SDF + D3 + `
+vec3 roomColor(vec2 p, vec2 sz, vec2 eye, float seed, float on) {
+  float E = 1.8;
+  vec3 P0 = vec3(p, 0.0);
+  vec3 rd = normalize(vec3(p - eye, E));
+  float hx = sz.x * 0.5, hy = sz.y * 0.5;
+  float D = max(sz.x, sz.y) * (0.6 + uParamC * 1.4);
+  float tx = ((rd.x > 0.0 ? hx : -hx) - P0.x) / rd.x;
+  float ty = ((rd.y > 0.0 ? hy : -hy) - P0.y) / rd.y;
+  float tz = D / rd.z;
+  float t = min(min(tx, ty), tz);
+  vec3 H = P0 + rd * t;
+  vec3 base = hsv(seed, 0.45, 0.85);
+  vec3 c;
+  if (t == tz) {
+    vec2 w = H.xy / vec2(hx, hy);
+    c = base * (0.75 + 0.25 * step(0.5, fract(w.x * 4.0)));
+    if (seed > 0.33 && seed < 0.66) c = vec3(0.45, 0.25, 0.12) * (0.6 + 0.4 * step(0.15, fract(w.y * 3.0))) * (0.7 + 0.3 * hash11(floor(w.x * 9.0) + floor(w.y * 3.0) * 7.0));
+    float fr = step(abs(w.x - 0.1), 0.35) * step(abs(w.y - 0.15), 0.3);
+    c = mix(c, hsv(fract(seed * 7.0), 0.6, 0.7), fr * step(seed, 0.33));
+  } else if (t == ty) {
+    if (rd.y < 0.0) c = vec3(0.5, 0.32, 0.18) * (0.75 + 0.25 * step(0.5, fract(H.x / sz.x * 8.0)));
+    else c = vec3(0.85);
+  } else c = base * 0.75 * (0.8 + 0.2 * step(0.5, fract(H.y / sz.y * 6.0)));
+  vec3 lamp = vec3(0.0, hy * 0.75, D * 0.45);
+  float ld = length(H - lamp) / max(sz.x, sz.y);
+  float light = 1.2 / (1.0 + ld * ld * 6.0);
+  float ao = smoothstep(0.0, 0.08, min(min(hx - abs(H.x), hy - abs(H.y)), D - H.z) / max(sz.x, sz.y));
+  float fog = exp(-H.z / D * 0.6);
+  vec3 lit = c * uColA * light * (0.5 + 0.5 * ao) * fog;
+  return mix(c * 0.05, lit, on);
+}
+vec3 effect(vec2 uv) {
+  int id = zoneId(uv);
+  int ty = zoneTypeAt(uv);
+  vec3 wall = stoneLit(uv) * uParamA;
+  if (id == 0 || !(ty == T_FENETRE || ty == T_PORTE)) return wall + uColB * 0.05;
+  vec4 g = zoneGeom(id);
+  vec4 mt = zoneMeta(id);
+  vec2 cpa = asp(g.xy);
+  vec2 sz = vec2(g.z * uAspect, g.w);
+  vec2 p = asp(uv) - cpa;
+  float tt = uT * uSpeed;
+  vec2 eyeW = vec2(uAspect * (0.5 + 0.3 * uParamB * sin(tt * 0.35)), 0.45 + 0.12 * uParamB * sin(tt * 0.27));
+  vec2 eye = eyeW - cpa;
+  float t0 = mt.y * 0.6 + 0.05;
+  float on = smoothstep(t0, t0 + 0.04, uP) * (0.85 + 0.15 * step(0.2, vnoise(vec2(uT * 6.0, mt.x * 50.0))));
+  return roomColor(p, sz, eye, fract(mt.x * 3.7), on) * 3.2;
+}`,
+  },
+  {
+    id: 'eclats', name: 'Éclatement', category: 'Illusions 3D', mood: 'fort', defaultDuration: 14,
+    description: 'La façade se fissure, explose en éclats qui volent vers le public en tournoyant, révèle une lumière intérieure, puis se reconstruit.',
+    tags: ['halloween', 'national', 'musique', 'patrimoine'],
+    params: [I(), S(), CA('#ff8a2b', 'Fissures et cœur'), CB('#4a7dff', 'Lueur du vide'), R('size', 'Nombre d’éclats', 'uParamA', 0.5), R('force', 'Force de l’explosion', 'uParamB', 0.6)],
+    glsl: HELPERS + SDF + D3 + `
+vec2 nearestCell(vec2 q, float sc) {
+  vec2 g = floor(q * sc);
+  float md = 1e9;
+  vec2 best = g;
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 c = g + vec2(float(i), float(j));
+    vec2 s = (c + hash22(c)) / sc;
+    float d = dot(q - s, q - s);
+    if (d < md) { md = d; best = c; }
+  }
+  return best;
+}
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  vec2 VP = vec2(uAspect * 0.5, 0.5);
+  float sc = 4.0 + uParamA * 10.0;
+  float crack = smoothstep(0.04, 0.2, uP) * (1.0 - smoothstep(0.9, 1.0, uP));
+  float ex = sin(PI * sat((uP - 0.2) / 0.68));
+  ex = ex * ex * (3.0 - 2.0 * ex);
+  float S = 1.0 + ex * (0.8 + uParamB * 1.6);
+  vec2 p0 = VP + (pa - VP) / S;
+  vec2 g = floor(p0 * sc);
+  float bestZ = -1.0;
+  float r0 = length(pa - VP);
+  vec3 bg = uColA * ex * exp(-r0 * 2.5) * 1.6 + uColB * ex * 0.25 * (0.5 + 0.5 * fbm(pa * 6.0 + uT));
+  bg += vec3(1.0) * twinkle(pa, 50.0, 0.08) * ex;
+  vec3 col = bg;
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 cell = g + vec2(float(i), float(j));
+    vec2 site = (cell + hash22(cell)) / sc;
+    float h = hash21(cell * 1.7);
+    float zS = S * (1.0 + ex * (h - 0.5) * 0.9);
+    vec2 cp = VP + (site - VP) * zS;
+    float shrink = zS * (1.0 - 0.3 * ex);
+    float ang = ex * (h - 0.5) * 3.0;
+    vec2 q = site + rot2(-ang) * (pa - cp) / shrink;
+    if (nearestCell(q, sc) != cell) continue;
+    if (zS <= bestZ || zS > 3.3) continue;
+    bestZ = zS;
+    vec3 v = voronoi(q * sc);
+    float edge = smoothstep(0.06, 0.0, v.y);
+    float tilt = 0.55 + 0.45 * cos(ang * 1.3);
+    float fade = 1.0 - smoothstep(2.6, 3.4, zS);
+    col = mix(bg, litAt(q) * tilt * (1.0 - edge * crack * 0.8) + uColA * edge * crack * (2.5 - 1.5 * ex), fade);
+  }
+  return col;
+}`,
+  },
+  {
+    id: 'scanner3d', name: 'Scanner 3D', category: 'Illusions 3D', mood: 'moyen', defaultDuration: 14,
+    description: 'Le relief réel du monument est révélé comme par un scanner : lignes de niveau, plan laser qui traverse la profondeur, nuage de points holographique.',
+    tags: ['musique', 'patrimoine', 'national'],
+    params: [I(), S(), CA('#3dfcff', 'Proche'), CB('#ff3df0', 'Lointain'), SEL('mode', 'Rendu', 'uParamC', ['Lignes de niveau + scanner', 'Nuage de points', 'Les deux'], 2), R('lines', 'Densité des lignes', 'uParamA', 0.5), R('shade', 'Relief éclairé', 'uParamB', 0.4)],
+    glsl: HELPERS + SDF + D3 + `
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  float d = depthAt(uv);
+  int m = int(uParamC + 0.5);
+  vec3 dc = mix(uColB, uColA, sat(d * 1.4 - 0.2));
+  float t = uT * uSpeed;
+  vec3 c = vec3(0.0);
+  float a = t * 0.6;
+  vec3 L = normalize(vec3(cos(a), sin(a) * 0.6 + 0.4, 0.6));
+  c += dc * uParamB * 0.45 * diffuseAt(uv, L);
+  float sweep = fract(t * 0.12) * 1.3 - 0.15;
+  float band = exp(-pow((d - sweep) * 30.0, 2.0));
+  float behind = step(d, sweep);
+  if (m != 1) {
+    float v = d * (6.0 + uParamA * 24.0);
+    float fw = max(fwidth(v), 1e-4);
+    float e = abs(fract(v) - 0.5) / fw;
+    float line = 1.0 - sat(e - 0.5) ;
+    float lineTrue = 1.0 - sat((0.5 - abs(fract(v) - 0.5)) / fw - 0.5);
+    c += dc * lineTrue * (0.2 + 0.7 * behind);
+  }
+  if (m != 0) {
+    float gs = 90.0;
+    vec2 gp = pa * gs;
+    vec2 cellc = floor(gp) + 0.5;
+    float dd = depthAt(toUv(cellc / gs));
+    vec2 off = vec2(0.0, (dd - 0.5) * 0.0);
+    float r = length(gp - cellc - off);
+    c += dc * smoothstep(0.22, 0.05, r) * (0.15 + 0.6 * dd) * (0.3 + 0.7 * behind);
+  }
+  c += mix(uColA, vec3(1.0), 0.4) * band * 1.2;
+  c += dc * 0.25 * smoothstep(0.02, 0.0, abs(fract(pa.y * 40.0 - t * 0.5) - 0.5) - 0.48) * 0.3;
+  return c;
+}`,
+  },
+  {
+    id: 'liquide', name: 'Façade liquide', category: 'Illusions 3D', mood: 'calme', defaultDuration: 14,
+    description: 'Des gouttes tombent sur le monument et la pierre ondule comme la surface d’un lac, avec reflets et vaguelettes.',
+    tags: ['saisons', 'patrimoine', 'mariage'],
+    params: [I(), S(), CA('#e8f6ff', 'Reflets'), CB('#2f7dd1', 'Teinte de l’eau'), R('drops', 'Nombre de gouttes', 'uParamA', 0.5), R('force', 'Force des ondes', 'uParamB', 0.6), R('tint', 'Teinte de l’eau', 'uParamC', 0.35)],
+    glsl: HELPERS + SDF + D3 + `
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  float t = uT * uSpeed;
+  vec2 grad = vec2(0.0);
+  int N = 2 + int(uParamA * 6.0);
+  for (int i = 0; i < 8; i++) {
+    if (i >= N) break;
+    float fi = float(i);
+    float P = 4.0;
+    float tt = t + fi * P / float(N);
+    float cyc = floor(tt / P);
+    float age = mod(tt, P);
+    vec2 cpos = vec2(hash21(vec2(cyc, fi)) * uAspect, 0.15 + 0.75 * hash21(vec2(fi, cyc + 7.0)));
+    vec2 dv = pa - cpos;
+    float r = length(dv) + 1e-4;
+    float front = age * 0.28;
+    float env = exp(-age * 0.45) * smoothstep(front + 0.03, front - 0.12, r) * exp(-r * 2.0);
+    float k = 70.0;
+    float dh = cos(r * k - age * 14.0) * k * env;
+    grad += dv / r * dh;
+  }
+  grad *= 0.0035 * (0.3 + uParamB);
+  vec2 uv2 = clamp(uv + vec2(grad.x / uAspect, grad.y) * 0.12, 0.0, 1.0);
+  vec3 n = normalize(vec3(-grad * 1.6, 1.0));
+  vec3 L = normalize(vec3(-0.4, 0.6, 0.7));
+  float diff = dot(n, L);
+  float spec = pow(sat(dot(reflect(-L, n), vec3(0.0, 0.0, 1.0))), 60.0);
+  vec3 base = mix(stoneLit(uv2) * 0.7, uColB, uParamC * 0.5) * (0.25 + 0.75 * diff);
+  return base + uColA * spec * 1.8;
+}`,
+  },
+  {
+    id: 'trounoir', name: 'Trou noir', category: 'Illusions 3D', mood: 'fort', defaultDuration: 14,
+    description: 'Un trou noir naît au cœur du monument, aspire la façade en spirale avec son disque de lumière, puis la relâche.',
+    tags: ['musique', 'halloween'],
+    params: [I(), S(), CA('#ffb36b', 'Disque d’accrétion'), CB('#6b8bff', '2e couleur'), R('size', 'Taille', 'uParamA', 0.6), R('swirl', 'Tourbillon', 'uParamB', 0.6)],
+    glsl: HELPERS + SDF + D3 + `
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  vec2 c = vec2(uAspect * 0.5, 0.5);
+  float e = sin(PI * sat(uP * 1.1 - 0.03));
+  e = e * e;
+  vec2 d = pa - c;
+  float r = length(d);
+  float a = atan(d.y, d.x);
+  float hor = (0.03 + 0.11 * uParamA) * e;
+  float swirl = e * uParamB * 0.9 / (r + 0.06);
+  float rs = r + e * 0.18 * exp(-r * 3.0) + hor;
+  vec2 sp = c + vec2(cos(a + swirl), sin(a + swirl)) * rs;
+  vec3 col = stoneLit(clamp(toUv(sp), 0.0, 1.0)) * (0.45 + 0.15 * e);
+  float dim = smoothstep(hor * 0.9, hor * 3.0, r);
+  col *= dim;
+  vec2 dd = d * vec2(1.0, 3.2);
+  float rd = length(dd);
+  float ang = atan(dd.y, dd.x);
+  float disk = smoothstep(hor * 1.3, hor * 1.8, rd) * smoothstep(hor * 5.0, hor * 2.2, rd);
+  float tex = 0.5 + 0.5 * fbm(vec2(ang * 3.0 - uT * uSpeed * 3.0, rd * 25.0));
+  float dop = 1.0 + 0.7 * cos(ang);
+  float front = step(0.0, -d.y) + step(hor * 1.05, r);
+  col += mix(uColA, uColB, 0.5 - 0.5 * cos(ang)) * disk * tex * dop * 1.6 * e * min(front, 1.0);
+  col += uColA * exp(-abs(r - hor * 1.15) * 120.0) * 1.5 * e;
+  col *= smoothstep(hor, hor * 1.05, r);
+  return col;
+}`,
+  },
+  {
+    id: 'ruban', name: 'Ruban de lumière 3D', category: 'Illusions 3D', mood: 'moyen', defaultDuration: 14,
+    description: 'Des rubans lumineux s’enroulent autour du monument, passent devant puis derrière les colonnes et corniches, en éclairant la pierre sur leur passage.',
+    tags: ['noel', 'mariage', 'national', 'musique'],
+    params: [I(), S(), CA('#ff4fd8', 'Couleur 1'), CB('#4fe0ff', 'Couleur 2'), R('count', 'Nombre de rubans', 'uParamA', 0.5), R('width', 'Épaisseur', 'uParamB', 0.4), R('turns', 'Nombre de tours', 'uParamC', 0.5)],
+    glsl: HELPERS + SDF + D3 + `
+vec3 curveP(float s, float k, float t) {
+  float turns = 1.0 + uParamC * 4.0;
+  float ph = s * TAU * turns + t + k * 2.1;
+  float y = 0.5 + (0.28 + 0.06 * k) * cos(ph) + 0.08 * sin(s * 5.0 + k);
+  return vec3(mix(-0.08, uAspect + 0.08, s), y, sin(ph));
+}
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  float t = uT * uSpeed * 0.8;
+  int R = 1 + int(uParamA * 2.5);
+  float reveal = smoothstep(0.0, 0.35, uP);
+  int ty = zoneTypeAt(uv);
+  bool prot = ty == T_COLONNE || ty == T_CORNICHE || ty == T_STATUE || ty == T_TOUR;
+  vec3 wall = stoneLit(uv) * 0.12;
+  vec3 col = vec3(0.0);
+  float glow = 0.0, shadow = 0.0;
+  vec3 gcol = vec3(0.0);
+  for (int k = 0; k < 3; k++) {
+    if (k >= R) break;
+    float fk = float(k);
+    float best = 1e9, bz = 0.0, bs = 0.0;
+    vec3 prev = curveP(0.0, fk, t);
+    for (int i = 1; i <= 70; i++) {
+      float s = float(i) / 70.0;
+      if (s > reveal) break;
+      vec3 cur = curveP(s, fk, t);
+      vec2 a2 = prev.xy, b2 = cur.xy;
+      vec2 pa2 = pa - a2, ba = b2 - a2;
+      float h = sat(dot(pa2, ba) / dot(ba, ba));
+      float dd = length(pa2 - ba * h);
+      if (dd < best) { best = dd; bz = mix(prev.z, cur.z, h); bs = s; }
+      prev = cur;
+    }
+    float w = (0.006 + uParamB * 0.02) * (1.0 + 0.35 * bz);
+    vec3 rc = mix(uColA, uColB, fk / 2.0 + 0.3 * sin(bs * 6.0));
+    float across = best / w;
+    glow += exp(-best * 30.0) * (0.6 + 0.4 * bz);
+    gcol += rc * exp(-best * 30.0);
+    shadow = max(shadow, smoothstep(w * 2.0, 0.0, best - w * 0.5) * 0.5 * step(0.0, -bz + 1.0));
+    if (across < 1.0 && !(bz < 0.0 && prot)) {
+      float cyl = sqrt(1.0 - across * across);
+      float spec = pow(cyl, 18.0);
+      col = max(col, rc * (0.45 + 0.75 * cyl) * (0.7 + 0.5 * bz) + vec3(1.0) * spec * 0.7);
+    }
+  }
+  vec3 wallLit = wall + stoneLit(uv) * gcol * 0.35 * (1.0 - shadow);
+  return max(col * 1.3, wallLit);
+}`,
+  },
+  {
+    id: 'tuiles3d', name: 'Tuiles qui se retournent', category: 'Illusions 3D', mood: 'moyen', defaultDuration: 14,
+    description: 'La façade se transforme en mosaïque de tuiles qui pivotent en 3D, en vague, et dévoilent une face d’or ou de couleur.',
+    tags: ['mariage', 'noel', 'musique', 'national'],
+    params: [I(), S(), CA('#ffd24a', 'Face cachée'), CB('#ff3b6b', '2e couleur'), R('size', 'Taille des tuiles', 'uParamA', 0.4),
+      SEL('wave', 'Vague', 'uParamC', ['De gauche à droite', 'En diagonale', 'Depuis le centre', 'Au hasard'], 1), SEL('axis', 'Axe', 'uParamD', ['Vertical', 'Horizontal', 'Alterné'], 2)],
+    glsl: HELPERS + SDF + D3 + `
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  float cs = 0.03 + uParamA * 0.12;
+  vec2 cell = floor(pa / cs);
+  vec2 c = (cell + 0.5) * cs;
+  vec2 p = pa - c;
+  int w = int(uParamC + 0.5);
+  float o;
+  if (w == 0) o = c.x / uAspect;
+  else if (w == 1) o = (c.x / uAspect + (1.0 - c.y)) * 0.5;
+  else if (w == 2) o = length(c - vec2(uAspect * 0.5, 0.5)) * 1.2;
+  else o = hash21(cell);
+  float ph = uT * uSpeed * 0.18 - o * 1.2;
+  float th = PI * (floor(ph) + smoothstep(0.2, 0.8, fract(ph))) * sat(uP * 8.0);
+  int ax = int(uParamD + 0.5);
+  bool vert = ax == 0 || (ax == 2 && mod(cell.x + cell.y, 2.0) < 0.5);
+  if (!vert) p = p.yx;
+  float a = cs * 0.48;
+  float D = cs * 7.0;
+  float cth = cos(th), sth = sin(th);
+  float den = cth * D + p.x * sth;
+  if (abs(den) < 1e-5) return vec3(0.01);
+  float sl = p.x * D / den;
+  float z = sl * sth;
+  float y0 = p.y * (D - z) / D;
+  if (abs(sl) > a || abs(y0) > a) return vec3(0.01);
+  vec2 local = vert ? vec2(sl, y0) : vec2(y0, sl);
+  float shade = 0.3 + 0.7 * abs(cth);
+  float spec = pow(sat(1.0 - abs(abs(cth) - 0.93) * 9.0), 2.0);
+  vec3 col;
+  if (cth > 0.0) col = litAt(c + local) * shade;
+  else col = mix(uColA, uColB, hash21(cell * 3.1) * 0.6 + 0.2 * sin(local.x * 40.0)) * (0.65 + 0.35 * fbm((c + local) * 20.0)) * shade * 1.2;
+  return col + vec3(1.0) * spec * 0.5;
+}`,
+  },
+  {
+    id: 'chutepierres', name: 'Les pierres tombent', category: 'Illusions 3D', mood: 'fort', defaultDuration: 16,
+    description: 'Les pierres se détachent une à une, basculent et tombent vers le public ; dans les trous apparaît une lumière intérieure qui envahit le monument.',
+    tags: ['halloween', 'patrimoine', 'musique'],
+    params: [I(), S(), CA('#ffb04a', 'Lumière intérieure'), CB('#ff3b1a', '2e couleur'), R('amount', 'Pierres qui tombent', 'uParamA', 0.7), R('size', 'Taille des pierres', 'uParamB', 0.4)],
+    glsl: HELPERS + SDF + D3 + `
+float fallT(vec2 brick) {
+  float h = hash21(brick * 1.37);
+  if (h > uParamA) return 1e9;
+  return 0.08 + h / max(uParamA, 0.01) * 0.62;
+}
+vec3 inner(vec2 pa, vec2 lq) {
+  float depth = 0.25 + 0.75 * smoothstep(0.0, 1.0, lq.y);
+  vec3 c = mix(uColB, uColA, 0.5 + 0.5 * fbm(pa * 8.0 + uT * 0.4)) * (0.6 + 0.6 * uP);
+  float top = smoothstep(0.75, 1.0, lq.y);
+  float bottom = smoothstep(0.25, 0.0, lq.y);
+  c *= 1.0 - top * 0.8;
+  c += vec3(0.25, 0.2, 0.15) * bottom;
+  return c * depth * 1.4;
+}
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  float bh = 0.025 + uParamB * 0.05;
+  float bw = bh * 2.2;
+  float row = floor(pa.y / bh);
+  float bestS = -1.0;
+  vec3 col = vec3(0.0);
+  for (int j = 0; j <= 10; j++) {
+    float r = row + float(j);
+    float sh = mod(r, 2.0) * 0.5 * bw;
+    float colI = floor((pa.x - sh) / bw);
+    for (int k = -1; k <= 1; k++) {
+      vec2 brick = vec2(colI + float(k), r);
+      float tf = fallT(brick);
+      vec2 c0 = vec2((brick.x + 0.5) * bw + sh, (r + 0.5) * bh);
+      float f = (uP - tf) * uDur;
+      if (j == 0 && k == 0 && f <= 0.0) {
+        vec2 lq = (pa - (c0 - vec2(bw, bh) * 0.5)) / vec2(bw, bh);
+        float e = min(min(lq.x, 1.0 - lq.x), min(lq.y, 1.0 - lq.y));
+        if (bestS < 0.0) { bestS = 0.0; col = litAt(pa) * 0.5 * (0.6 + 0.4 * smoothstep(0.0, 0.08, e)); }
+        continue;
+      }
+      if (f <= 0.0) continue;
+      float s = 1.0 + f * 0.35;
+      vec2 cc = c0 + vec2((hash11(brick.x + r * 3.0) - 0.5) * f * 0.1, -0.9 * f * f);
+      float ang = (hash21(brick) - 0.5) * f * 2.0;
+      vec2 q = rot2(-ang) * (pa - cc) / s;
+      if (abs(q.x) > bw * 0.5 || abs(q.y) > bh * 0.5) continue;
+      if (s <= bestS) continue;
+      bestS = s;
+      float fade = 1.0 - smoothstep(1.4, 2.2, s);
+      vec2 lq = q / vec2(bw, bh) + 0.5;
+      float e = min(min(lq.x, 1.0 - lq.x), min(lq.y, 1.0 - lq.y));
+      col = litAt(c0 + q) * (0.7 + 0.3 * cos(ang)) * (0.55 + 0.45 * smoothstep(0.0, 0.1, e)) * fade + uColA * 0.15 * fade;
+    }
+  }
+  if (bestS < 0.0) {
+    float sh = mod(row, 2.0) * 0.5 * bw;
+    vec2 c0 = vec2((floor((pa.x - sh) / bw) + 0.5) * bw + sh, (row + 0.5) * bh);
+    vec2 lq = (pa - (c0 - vec2(bw, bh) * 0.5)) / vec2(bw, bh);
+    col = inner(pa, lq);
+  }
+  return col;
+}`,
+  },
+  {
+    id: 'oeil', name: 'L’œil géant', category: 'Illusions 3D', mood: 'moyen', defaultDuration: 14,
+    description: 'Un œil immense s’ouvre sur le monument, regarde le public, cligne et suit les mouvements — ou un œil dans chaque fenêtre.',
+    tags: ['halloween', 'musique'],
+    params: [I(), S(), CA('#3fb7ff', 'Iris'), CB('#ffb347', '2e couleur de l’iris'), SEL('where', 'Où', 'uParamC', ['Un œil géant au centre', 'Un œil dans chaque fenêtre'], 0), R('size', 'Taille', 'uParamA', 0.6), R('wall', 'Lumière sur les murs', 'uParamB', 0.1)],
+    glsl: HELPERS + SDF + D3 + `
+vec3 eye(vec2 p, float seed) {
+  float t = uT * uSpeed + seed * 10.0;
+  float bl = fract(t / 4.3 + seed);
+  float blink = smoothstep(0.0, 0.03, bl) * smoothstep(0.08, 0.05, bl);
+  float open = sat(uP * 6.0) * sat((1.0 - uP) * 6.0) * (1.0 - blink);
+  float lid = open * 0.62 * pow(sat(1.0 - p.x * p.x), 0.75);
+  if (abs(p.y) > lid) {
+    float edge = smoothstep(0.06, 0.0, abs(p.y) - lid) * step(abs(p.x), 1.0);
+    return vec3(0.25, 0.15, 0.12) * edge * 0.6;
+  }
+  float r = length(p);
+  float n = sqrt(sat(1.0 - r * r * 0.7));
+  vec3 c = vec3(0.95, 0.92, 0.88) * (0.45 + 0.55 * n);
+  c = mix(c, vec3(0.8, 0.25, 0.2), smoothstep(0.6, 1.0, r) * 0.35 * (0.5 + 0.5 * vnoise(vec2(atan(p.y, p.x) * 8.0, r * 10.0))));
+  float k = floor(t / 1.7);
+  vec2 g0 = (hash22(vec2(k, seed)) - 0.5) * vec2(0.55, 0.25);
+  vec2 g1 = (hash22(vec2(k + 1.0, seed)) - 0.5) * vec2(0.55, 0.25);
+  vec2 gaze = mix(g0, g1, smoothstep(0.75, 1.0, fract(t / 1.7)));
+  vec2 ip = p - gaze;
+  float ir = length(ip);
+  float IR = 0.4;
+  if (ir < IR) {
+    float a = atan(ip.y, ip.x);
+    float fib = 0.6 + 0.4 * vnoise(vec2(a * 28.0, ir * 6.0)) + 0.2 * sin(a * 60.0);
+    vec3 ic = mix(uColB, uColA, smoothstep(0.08, 0.38, ir)) * fib;
+    ic *= smoothstep(IR, IR * 0.85, ir) * 0.7 + 0.3;
+    float pr = 0.12 + 0.05 * uBeat + 0.04 * sin(t * 0.7);
+    ic = mix(ic, vec3(0.0), smoothstep(pr + 0.01, pr - 0.01, ir));
+    c = mix(c, ic * 1.3, smoothstep(IR, IR - 0.015, ir));
+  }
+  c += vec3(1.0) * smoothstep(0.06, 0.02, length(ip - vec2(-0.13, 0.13))) * 1.2;
+  c += vec3(1.0) * smoothstep(0.03, 0.01, length(ip - vec2(0.1, -0.08))) * 0.6;
+  c *= 1.0 - smoothstep(lid * 0.7, lid, abs(p.y)) * 0.5;
+  return c;
+}
+vec3 effect(vec2 uv) {
+  vec2 pa = asp(uv);
+  vec3 wall = stoneLit(uv) * uParamB;
+  if (uParamC < 0.5) {
+    float R = 0.12 + uParamA * 0.3;
+    vec2 p = (pa - vec2(uAspect * 0.5, 0.52)) / (R * vec2(1.6, 1.6));
+    if (abs(p.x) > 1.05) return wall;
+    return max(eye(p, 0.0) * 0.85, wall);
+  }
+  int id = zoneId(uv);
+  int ty = zoneTypeAt(uv);
+  if (id == 0 || !isOpening(ty)) return wall;
+  vec4 g = zoneGeom(id);
+  vec4 mt = zoneMeta(id);
+  vec2 sz = vec2(g.z * uAspect, g.w);
+  float R = min(sz.x, sz.y) * 0.5 * (0.6 + 0.4 * uParamA);
+  vec2 p = (pa - asp(g.xy)) / R;
+  return max(eye(p, mt.x) * 1.1, wall);
+}`,
+  },
   // ─────────────────────────── SAISONS ET FÊTES ───────────────────────────
   {
     id: 'traineau', name: 'Traîneau du Père Noël', category: 'Saisons et fêtes', mood: 'moyen', defaultDuration: 14,
@@ -2476,7 +3095,7 @@ vec3 effect(vec2 uv) { return vec3(0.0); }`,
 
 export const EFFECT_MAP = new Map(EFFECTS.map((e) => [e.id, e]));
 
-export const CATEGORIES: Category[] = ['Mes tableaux', 'Lumière', 'Console lumière', 'Saisons et fêtes', 'Architecture', 'Matières', 'Nature', 'Graphique', 'Illusions'];
+export const CATEGORIES: Category[] = ['Mes tableaux', 'Illusions 3D', 'Lumière', 'Console lumière', 'Saisons et fêtes', 'Architecture', 'Matières', 'Nature', 'Graphique', 'Illusions'];
 
 export const CATEGORY_COLORS: Record<Category, string> = {
   Lumière: '#ffcf5c',
@@ -2488,6 +3107,7 @@ export const CATEGORY_COLORS: Record<Category, string> = {
   'Mes tableaux': '#5ef0ff',
   'Console lumière': '#ffe14d',
   'Saisons et fêtes': '#ff7a3c',
+  'Illusions 3D': '#8f6bff',
 };
 
 // ───────────── Tableaux personnalisés (écrits par l'utilisateur) ─────────────

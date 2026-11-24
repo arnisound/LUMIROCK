@@ -61,6 +61,11 @@ export const EXAMPLES: Example[] = [
     sounds: [{ sfx: 'applaudissements', at: 0, volume: 0.6 }, { sfx: 'applaudissements', at: 'fin', offset: -6, volume: 0.9 }],
   },
   {
+    id: 'demo3d', name: 'Grand show 3D', description: 'Château : la façade se scanne, sort en blocs, s’ouvre sur un tunnel, explose et s’effondre. Effet « waouh » garanti.', template: 'chateau', scenario: 'show3d', duration: 150, title: 'Grand show 3D',
+    music: J('patrimoine.mp3', 682398, 'The ride of the Dark Knight', 'zero-project'),
+    sounds: [{ sfx: 'gong', at: 0.3, volume: 0.6 }, { sfx: 'whoosh', at: 'tunnel', offset: -0.6, volume: 0.8 }, { sfx: 'whoosh', at: 'trounoir', offset: 0.5, volume: 0.7 }, { sfx: 'grondement', at: 'eclats', offset: 2.5, volume: 0.9 }, { sfx: 'grondement', at: 'chutepierres', offset: 1.5, volume: 0.8 }, { sfx: 'applaudissements', at: 'fin', offset: -6, volume: 0.8 }],
+  },
+  {
     id: 'nouvelan', name: 'Réveillon du Nouvel An', description: 'Hôtel de ville : ciel étoilé, décompte géant de 10 à 0, bouquet de feux d’artifice et vœux.', template: 'mairie', scenario: 'nouvelan', duration: 95, title: 'Bonne année !',
     music: J('nouvelan.mp3', 1971553, 'frozen xmas', 'Arthur Ment'),
     sounds: [{ sfx: 'carillon', at: 0.5, volume: 0.7 }, { sfx: 'whoosh', at: 'decompte', offset: -1, volume: 0.6 }, { sfx: 'bouquet', at: 'decompte', offset: 10, volume: 1 }, { sfx: 'applaudissements', at: 'decompte', offset: 10.5, volume: 0.8 }],

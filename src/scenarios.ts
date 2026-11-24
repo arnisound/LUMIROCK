@@ -102,6 +102,24 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    id: 'show3d', name: 'Grand show 3D', description: 'Toutes les illusions 3D : scanner, blocs, tunnel, pièces secrètes, éclatement, trou noir…', palette: ['#7fdcff', '#8f6bff'],
+    steps: [
+      { effect: 'scanner3d', weight: 1.0, transition: 'flash' },
+      { effect: 'blocs3d', weight: 1.1 },
+      { effect: 'volets3d', weight: 1.0, transition: 'cut' },
+      { effect: 'tunnel', weight: 1.2, transition: 'flash' },
+      { effect: 'pieces', weight: 1.0 },
+      { effect: 'ruban', weight: 1.0 },
+      { effect: 'tuiles3d', weight: 1.0, transition: 'cut' },
+      { effect: 'liquide', weight: 0.9 },
+      { effect: 'oeil', weight: 0.9, transition: 'noir' },
+      { effect: 'trounoir', weight: 1.1, transition: 'flash' },
+      { effect: 'eclats', weight: 1.1, transition: 'cut' },
+      { effect: 'chutepierres', weight: 1.2 },
+      { effect: 'allumage', weight: 0.6 },
+    ],
+  },
+  {
     id: 'nouvelan', name: 'Réveillon du Nouvel An', description: 'Ciel étoilé, décompte géant, feux d’artifice et vœux.', palette: ['#ffd36b', '#7a5cff'],
     steps: [
       { effect: 'etoiles', weight: 1.0 },
